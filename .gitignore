@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Model checkpoints (released via HuggingFace Hub, not committed)
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+models/checkpoints/
+
+# Data (large — kept out of the repo)
+data/raw/
+data/processed/
+data/synthetic/
+data/real/
+*.wav
+*.flac
+*.ogg
+
+# Training artefacts
+runs/
+wandb/
+lightning_logs/
+logs/
+*.log
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Secrets / user-local
+.env
+*.key
+*.pem
+api_key.txt
+apikey

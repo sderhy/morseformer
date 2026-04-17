@@ -1,0 +1,61 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "morseformer"
+version = "0.0.0"
+description = "Open-source transformer-based Morse/CW decoder with a built-in ham-specialised language model"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "sderhy", email = "sderhy@gmail.com" }]
+keywords = [
+    "morse",
+    "cw",
+    "amateur-radio",
+    "ham-radio",
+    "transformer",
+    "speech-to-text",
+    "dsp",
+    "ctc",
+]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Ham Radio",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "torch>=2.1",
+]
+
+[project.optional-dependencies]
+audio = ["pasimple>=0.0.3"]
+dev = ["pytest>=7", "ruff>=0.1"]
+training = ["wandb", "hydra-core", "tqdm"]
+
+[project.urls]
+Homepage = "https://github.com/sderhy/morseformer"
+Repository = "https://github.com/sderhy/morseformer"
+Issues = "https://github.com/sderhy/morseformer/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["morseformer", "morse_synth"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
