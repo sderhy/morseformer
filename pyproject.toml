@@ -34,13 +34,13 @@ classifiers = [
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
-    "torch>=2.1",
 ]
 
 [project.optional-dependencies]
 audio = ["pasimple>=0.0.3"]
+ml = ["torch>=2.1"]
 dev = ["pytest>=7", "ruff>=0.1"]
-training = ["wandb", "hydra-core", "tqdm"]
+training = ["torch>=2.1", "wandb", "hydra-core", "tqdm"]
 
 [project.urls]
 Homepage = "https://github.com/sderhy/morseformer"
