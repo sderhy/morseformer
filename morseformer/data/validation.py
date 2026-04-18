@@ -128,16 +128,26 @@ def _one_sample(
     snr_db: float,
     rx_filter_bw: float | None,
 ) -> ValidationSample:
-    audio: np.ndarray | None = None
+    # Use duration-estimate pre-filtering so that labels always match
+    # the rendered audio — same policy as the training stream.
+    from morseformer.data.synthetic import (
+        _FALLBACK_SHORT_TEXTS,
+        estimate_cw_duration_s,
+    )
+
+    budget = cfg.target_duration_s * 0.9
     text = ""
     for _ in range(cfg.max_text_retries):
-        text = sample_text(rng, cfg.text_mix)
-        channel_seed = int(rng.integers(0, 2**31 - 1))
-        audio = _render_one(text, wpm, cfg, snr_db, rx_filter_bw, channel_seed)
-        if audio.size <= cfg.target_samples:
+        candidate = sample_text(rng, cfg.text_mix)
+        if estimate_cw_duration_s(candidate, wpm) <= budget:
+            text = candidate
             break
-    assert audio is not None
+    if not text:
+        fallbacks = _FALLBACK_SHORT_TEXTS()
+        text = fallbacks[int(rng.integers(0, len(fallbacks)))]
 
+    channel_seed = int(rng.integers(0, 2**31 - 1))
+    audio = _render_one(text, wpm, cfg, snr_db, rx_filter_bw, channel_seed)
     audio = _pad_or_truncate(audio, cfg.target_samples)
     features = extract_features(audio, cfg.sample_rate, cfg.frontend)
     tokens = encode(text)

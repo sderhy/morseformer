@@ -33,9 +33,48 @@ from morse_synth.channel import ChannelConfig
 from morse_synth.core import render
 from morse_synth.keying import KeyingConfig
 from morse_synth.operator import OperatorConfig
+from morseformer.core.morse_table import MORSE_TABLE, unit_seconds
 from morseformer.core.tokenizer import BLANK_INDEX, encode
 from morseformer.data.text import DEFAULT_MIX, TextMix, sample_text
 from morseformer.features import FrontendConfig, extract_features
+
+
+def estimate_cw_duration_s(text: str, wpm: float) -> float:
+    """Upper-bound estimate of the audio duration of ``text`` at ``wpm``.
+
+    Counts PARIS-standard units for every known character: each dit is 1
+    unit, each dah is 3 units, inter-element gaps are 1 unit, inter-
+    character gaps are 3 units, and inter-word gaps are 7 units. Adds a
+    50 ms tail for the keying ramp-down.
+
+    Slightly over-estimates real audio duration, which is fine for
+    pre-filtering overly long texts before rendering.
+    """
+    u = unit_seconds(wpm)
+    total_units = 0.0
+    words = text.upper().split()
+    for w_idx, word in enumerate(words):
+        if w_idx > 0:
+            total_units += 7.0  # inter-word gap
+        first_char = True
+        for ch in word:
+            code = MORSE_TABLE.get(ch)
+            if code is None:
+                continue
+            if not first_char:
+                total_units += 3.0  # inter-character gap
+            first_char = False
+            # Elements plus inter-element gaps.
+            total_units += sum(1.0 if e == "." else 3.0 for e in code)
+            total_units += max(0, len(code) - 1)
+    return total_units * u + 0.05
+
+
+def _FALLBACK_SHORT_TEXTS() -> tuple[str, ...]:
+    # Always-very-short material used when sampling keeps returning texts
+    # that exceed the target duration — e.g. at 16 WPM where prose is
+    # hard to fit in six seconds. Guaranteed to fit ≥ 6 s at WPM ≥ 12.
+    return ("K", "TU", "73", "CQ", "QRZ", "DE", "R", "SK", "BK")
 
 
 @dataclass
@@ -199,27 +238,42 @@ class SyntheticCWDataset(IterableDataset):
             seed=ch_seed,
         )
 
+    def _sample_fitting_text(self, rng: np.random.Generator, wpm: float) -> str:
+        """Draw a text whose estimated rendered duration fits the target.
+
+        Uses ``estimate_cw_duration_s`` as a cheap pre-filter so we never
+        render a clip that will have to be truncated. On pathological
+        cases (e.g. every sampled text is too long at very slow WPM),
+        falls back to a hardcoded short Q-code so the label always
+        matches the audio.
+        """
+        cfg = self.cfg
+        # Leave a 10% margin so that jitter / keying tail can't push us
+        # past the budget.
+        budget = cfg.target_duration_s * 0.9
+        for _ in range(cfg.max_text_retries):
+            text = sample_text(rng, cfg.text_mix)
+            if estimate_cw_duration_s(text, wpm) <= budget:
+                return text
+        # Fallback.
+        short = _FALLBACK_SHORT_TEXTS()
+        return short[int(rng.integers(0, len(short)))]
+
     def _generate_one(self, rng: np.random.Generator) -> dict:
         cfg = self.cfg
         wpm = float(rng.uniform(*cfg.wpm_range))
 
-        text = ""
-        audio: np.ndarray | None = None
-        for _ in range(cfg.max_text_retries):
-            text = sample_text(rng, cfg.text_mix)
-            operator = self._sample_operator(rng, wpm)
-            channel = self._sample_channel(rng)
-            audio = render(
-                text,
-                operator=operator,
-                keying=cfg.keying,
-                channel=channel,
-                freq=cfg.freq_hz,
-                sample_rate=cfg.sample_rate,
-            )
-            if audio.size <= cfg.target_samples:
-                break
-        assert audio is not None
+        text = self._sample_fitting_text(rng, wpm)
+        operator = self._sample_operator(rng, wpm)
+        channel = self._sample_channel(rng)
+        audio = render(
+            text,
+            operator=operator,
+            keying=cfg.keying,
+            channel=channel,
+            freq=cfg.freq_hz,
+            sample_rate=cfg.sample_rate,
+        )
 
         audio = _pad_or_truncate(audio, cfg.target_samples)
         features = extract_features(audio, cfg.sample_rate, cfg.frontend)  # [T, 1]
