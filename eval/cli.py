@@ -25,9 +25,14 @@ from eval.datasets import generate_noisy, generate_sanity
 from eval.snr_ladder import run_snr_ladder
 from morseformer.baselines import rule_based
 
+# Decoders that need no configuration beyond the audio/sample_rate pair
+# are registered directly. The neural decoder needs a checkpoint path,
+# so it is handled specially below.
 DECODERS: dict[str, Decoder] = {
     "rule_based": rule_based.decode,
 }
+
+_DECODER_CHOICES = sorted(list(DECODERS) + ["neural"])
 
 
 def _parse_snrs(spec: str) -> list[float]:
@@ -50,8 +55,20 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="Run a morseformer decoder against a dataset.",
     )
     parser.add_argument(
-        "--decoder", choices=sorted(DECODERS), default="rule_based",
+        "--decoder", choices=_DECODER_CHOICES, default="rule_based",
         help="Which decoder to benchmark.",
+    )
+    parser.add_argument(
+        "--checkpoint", default=None,
+        help="Path to a trained checkpoint (required when --decoder neural).",
+    )
+    parser.add_argument(
+        "--device", default="cpu",
+        help="Device for the neural decoder (cpu / cuda).",
+    )
+    parser.add_argument(
+        "--no-ema", action="store_true",
+        help="Neural decoder: load raw model weights instead of EMA ones.",
     )
     parser.add_argument(
         "--dataset", choices=("sanity", "noisy", "snr_ladder"), default="sanity",
@@ -102,9 +119,27 @@ def _print_single(result, *, decoder: str, dataset_label: str, verbose: bool) ->
             print(f"        hyp: {s.hypothesis!r}")
 
 
+def _build_decoder(args: argparse.Namespace) -> Decoder:
+    if args.decoder == "neural":
+        if not args.checkpoint:
+            print("--checkpoint is required when --decoder neural",
+                  file=sys.stderr)
+            sys.exit(2)
+        # Deferred import so that users on machines without torch can
+        # still run `--decoder rule_based`.
+        from morseformer.baselines.neural import (
+            NeuralDecoder, NeuralDecoderConfig,
+        )
+        return NeuralDecoder.from_checkpoint(
+            args.checkpoint,
+            NeuralDecoderConfig(device=args.device, use_ema=not args.no_ema),
+        )
+    return DECODERS[args.decoder]
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
-    decoder = DECODERS[args.decoder]
+    decoder = _build_decoder(args)
 
     if args.dataset == "sanity":
         ds = generate_sanity(n=args.n)
