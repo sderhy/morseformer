@@ -39,7 +39,8 @@ The language model is trained from scratch on amateur-radio text: RBN spot archi
 
 - [x] **Phase 0** — evaluation harness, rule-based baseline decoder
 - [x] **Phase 1** — parametric operator model + HF-channel simulator (AWGN, QRN, QSB, carrier drift, RX filter); SNR-ladder benchmark
-- [ ] Phase 2 — acoustic model (clean + moderate-noise training)
+- [x] **Phase 2.0** — acoustic model (Conformer + RoPE, 3.9 M params, CTC head) trained on clean audio; 1.17 % CER on a balanced 200-sample clean validation set (0 % on 4 of 5 WPM bins at 40 samples each)
+- [ ] Phase 2.1 — moderate-noise training (AWGN, SNR ∈ [0, 30] dB, operator jitter); target: beat the rule-based baseline across the SNR ladder
 - [ ] Phase 3 — weak-signal training + RNN-T head + FiLM conditioning
 - [ ] Phase 4 — language-model pretraining + shallow fusion
 - [ ] Phase 5 — real-time WSL CLI on live IC-7300 audio
@@ -69,6 +70,37 @@ from noise impulses — a well-known failure mode of threshold-based CW
 decoders below 0 dB SNR. The Phase-2 transformer should collapse this
 cliff via probabilistic element scoring and shallow-fusion language
 priors.
+
+## Phase 2.0 result (clean-audio acoustic model)
+
+Conformer encoder (d_model = 144, 8 layers, 4 heads, 4× time sub-
+sampling, RoPE attention, LayerNorm-based conv module), ~3.9 M
+trainable parameters. Trained for 14 k steps on the synthetic stream
+(WPM ∈ U(16, 28), no channel, no operator jitter, fixed 6 s utterances
+at 8 kHz). AdamW, 2 k warmup + cosine decay, EMA 0.9999, bf16 autocast,
+CTC loss with fp32 log-softmax head. Single RTX 3060 (6 GB), ≈ 3 hours
+wall time.
+
+Clean validation (200 samples, 5 WPM bins × 40 samples, same text mix
+as training):
+
+```
+  WPM  |  n  |   CER   |   WER
+  -----+-----+---------+--------
+   16  |  40 |  0.0000 |  0.0000
+   20  |  40 |  0.0000 |  0.0000
+   22  |  40 |  0.0000 |  0.0000
+   25  |  40 |  0.0000 |  0.0000
+   28  |  40 |  0.0583 |  0.0750
+  -----+-----+---------+--------
+  all  | 200 |  0.0117 |  0.0150
+```
+
+The 28 WPM residual is concentrated on 1–3 character Q-codes where the
+6 s window is mostly silence and the model occasionally fires spurious
+characters on the silent lead-in. Noisy-condition training (Phase 2.1)
+will expose the same edge case to ambient-noise data and should
+regularise it away.
 
 ## Quick start
 
