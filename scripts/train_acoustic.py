@@ -57,9 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
     # Bookkeeping
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--eval-every", type=int, default=1_000)
+    p.add_argument("--save-every", type=int, default=500,
+                   help="Write last.pt every N steps between evals so "
+                        "a crash never loses more than this many steps. "
+                        "0 disables.")
     p.add_argument("--checkpoint-dir", type=Path,
                    default=Path("checkpoints/phase2_0"))
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--resume-from", type=Path, default=None,
+                   help="Path to a checkpoint (e.g. checkpoints/.../last.pt) "
+                        "to resume training from. Restores model, EMA, "
+                        "optimizer, scheduler, step counter, best-CER.")
     return p
 
 
@@ -112,8 +120,10 @@ def main(argv: list[str] | None = None) -> int:
         dtype=args.dtype,
         log_every=args.log_every,
         eval_every=args.eval_every,
+        save_every=args.save_every,
         checkpoint_dir=args.checkpoint_dir,
         jsonl_log=args.checkpoint_dir / "train.jsonl",
+        resume_from=args.resume_from,
     )
 
     print(f"[train_acoustic] device={device} dtype={args.dtype} "

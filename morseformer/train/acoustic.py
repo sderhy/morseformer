@@ -89,11 +89,24 @@ class TrainConfig:
     # --- bookkeeping ---
     log_every: int = 50
     eval_every: int = 1_000
+    # Periodic cheap snapshot (no validation). ``last.pt`` is always
+    # written on every eval, plus every ``save_every`` steps in between
+    # so a crash never loses more than this many steps of progress.
+    # Set to 0 to disable (saves happen only on eval).
+    save_every: int = 500
     checkpoint_dir: Path = Path("checkpoints/phase2_0")
     jsonl_log: Path = Path("checkpoints/phase2_0/train.jsonl")
 
     # --- EMA ---
     ema_decay: float = 0.9999
+
+    # --- resume ---
+    # If set, training picks up from this checkpoint: model + EMA +
+    # optimizer + scheduler + step counter + best_cer are restored.
+    # The dataset seed is bumped by the resumed step count so we do not
+    # replay the first N samples — new data from the resumption point
+    # onward, same distribution.
+    resume_from: Path | None = None
 
 
 # --------------------------------------------------------------------- #
@@ -225,8 +238,26 @@ def train(cfg: TrainConfig) -> dict:
     cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     cfg.jsonl_log.parent.mkdir(parents=True, exist_ok=True)
 
+    # --- resume from checkpoint if requested ----------------------- #
+    # Loaded up front so we can bump the dataset seed before building
+    # the DataLoader — otherwise workers spawn on the old seed and
+    # replay the first `resumed_step` samples we already trained on.
+    resume_ckpt: dict | None = None
+    resumed_step = 0
+    if cfg.resume_from is not None:
+        resume_ckpt = torch.load(
+            str(cfg.resume_from), map_location="cpu", weights_only=False
+        )
+        resumed_step = int(resume_ckpt["step"])
+
     # --- data ---
-    dataset = SyntheticCWDataset(cfg.dataset)
+    dataset_cfg = cfg.dataset
+    if resumed_step > 0:
+        from dataclasses import replace as dc_replace
+        dataset_cfg = dc_replace(
+            cfg.dataset, seed=cfg.dataset.seed + resumed_step * 7919
+        )
+    dataset = SyntheticCWDataset(dataset_cfg)
     loader = DataLoader(
         dataset,
         batch_size=cfg.batch_size,
@@ -269,6 +300,13 @@ def train(cfg: TrainConfig) -> dict:
     best_cer = float("inf")
     start_time = time.time()
 
+    if resume_ckpt is not None:
+        model.load_state_dict(resume_ckpt["model"])
+        ema.load_state_dict(resume_ckpt["ema"])
+        optimizer.load_state_dict(resume_ckpt["optimizer"])
+        scheduler.load_state_dict(resume_ckpt["scheduler"])
+        best_cer = float(resume_ckpt.get("best_cer", best_cer))
+
     jsonl_file = cfg.jsonl_log.open("a")
 
     def log(event: dict) -> None:
@@ -276,11 +314,16 @@ def train(cfg: TrainConfig) -> dict:
         jsonl_file.write(json.dumps(event) + "\n")
         jsonl_file.flush()
 
-    log({"event": "start", "config": _config_to_jsonable(cfg),
-         "model_params": model.num_parameters()})
+    if resume_ckpt is None:
+        log({"event": "start", "config": _config_to_jsonable(cfg),
+             "model_params": model.num_parameters()})
+    else:
+        log({"event": "resume", "step": resumed_step,
+             "from": str(cfg.resume_from),
+             "best_cer_so_far": best_cer})
 
     model.train()
-    step = 0
+    step = resumed_step
     running_loss = 0.0
     running_n = 0
 
@@ -357,11 +400,22 @@ def train(cfg: TrainConfig) -> dict:
                     best_cer = val_metrics["cer"]
                     _save_checkpoint(
                         cfg.checkpoint_dir / "best_cer.pt",
-                        model, ema, optimizer, scheduler, step, cfg, val_metrics,
+                        model, ema, optimizer, scheduler, step, cfg,
+                        val_metrics, best_cer,
                     )
                 _save_checkpoint(
                     cfg.checkpoint_dir / "last.pt",
-                    model, ema, optimizer, scheduler, step, cfg, val_metrics,
+                    model, ema, optimizer, scheduler, step, cfg,
+                    val_metrics, best_cer,
+                )
+            elif cfg.save_every > 0 and step % cfg.save_every == 0:
+                # Cheap progressive snapshot: write last.pt without
+                # running an eval. Crashes never lose more than
+                # `save_every` steps of progress.
+                _save_checkpoint(
+                    cfg.checkpoint_dir / "last.pt",
+                    model, ema, optimizer, scheduler, step, cfg,
+                    metrics=None, best_cer=best_cer,
                 )
 
     finally:
@@ -378,10 +432,12 @@ def _save_checkpoint(
     scheduler: torch.optim.lr_scheduler.LambdaLR,
     step: int,
     cfg: TrainConfig,
-    metrics: dict,
+    metrics: dict | None,
+    best_cer: float,
 ) -> None:
     torch.save(
         {
+            "best_cer": best_cer,
             "step": step,
             "model": model.state_dict(),
             "ema": ema.state_dict(),
@@ -400,4 +456,6 @@ def _config_to_jsonable(cfg: TrainConfig) -> dict:
     # Path → str for JSON.
     out["checkpoint_dir"] = str(cfg.checkpoint_dir)
     out["jsonl_log"] = str(cfg.jsonl_log)
+    if cfg.resume_from is not None:
+        out["resume_from"] = str(cfg.resume_from)
     return out
