@@ -73,7 +73,10 @@ class TrainConfig:
     batch_size: int = 32
     num_workers: int = 0           # 0 is safer on WSL / small machines
     device: str = "cpu"            # "cuda" when available
-    dtype: str = "float32"         # "bfloat16" on capable GPUs
+    # Master weights always stay in float32; `dtype` controls the AMP
+    # autocast precision for the forward pass. CTC loss and log-softmax
+    # are always computed in fp32 for numerical stability.
+    dtype: str = "float32"         # one of {float32, bfloat16, float16}
 
     # --- bookkeeping ---
     log_every: int = 50
@@ -90,8 +93,22 @@ class TrainConfig:
 # --------------------------------------------------------------------- #
 
 
-def _resolve_dtype(name: str) -> torch.dtype:
-    return {"float32": torch.float32, "bfloat16": torch.bfloat16}[name]
+_DTYPE_MAP = {
+    "float32": torch.float32,
+    "bfloat16": torch.bfloat16,
+    "float16": torch.float16,
+}
+
+
+def _resolve_amp(name: str) -> tuple[torch.dtype | None, bool]:
+    """Return (autocast_dtype_or_None, needs_grad_scaler)."""
+    if name == "float32":
+        return None, False
+    if name == "bfloat16":
+        return torch.bfloat16, False
+    if name == "float16":
+        return torch.float16, True
+    raise ValueError(f"unknown dtype: {name!r}")
 
 
 def flatten_targets(
@@ -129,6 +146,7 @@ def evaluate(
     val_samples: list[ValidationSample],
     device: torch.device,
     batch_size: int,
+    amp_dtype: torch.dtype | None = None,
 ) -> dict:
     from eval.metrics import character_error_rate, word_error_rate
 
@@ -141,7 +159,12 @@ def evaluate(
     for batch in _val_batches(val_samples, batch_size):
         features = batch["features"].to(device)
         lengths = batch["n_frames"].to(device)
-        log_probs, lengths_out = model(features, lengths=lengths)
+        with torch.amp.autocast(
+            device_type=device.type,
+            dtype=amp_dtype if amp_dtype is not None else torch.float32,
+            enabled=amp_dtype is not None,
+        ):
+            log_probs, lengths_out = model(features, lengths=lengths)
         argmax = log_probs.argmax(dim=-1).cpu()  # [B, T']
         assert lengths_out is not None
         lengths_out_list = lengths_out.cpu().tolist()
@@ -175,7 +198,7 @@ def evaluate(
 
 def train(cfg: TrainConfig) -> dict:
     device = torch.device(cfg.device)
-    dtype = _resolve_dtype(cfg.dtype)
+    amp_dtype, needs_scaler = _resolve_amp(cfg.dtype)
 
     cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
     cfg.jsonl_log.parent.mkdir(parents=True, exist_ok=True)
@@ -194,7 +217,8 @@ def train(cfg: TrainConfig) -> dict:
     val_samples = build_clean_validation(cfg.validation)
 
     # --- model + optim ---
-    model = AcousticModel(cfg.model).to(device=device, dtype=dtype)
+    # Master weights always in float32; AMP handles the forward-pass cast.
+    model = AcousticModel(cfg.model).to(device=device, dtype=torch.float32)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=cfg.peak_lr,
@@ -208,6 +232,8 @@ def train(cfg: TrainConfig) -> dict:
     )
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, schedule)
     ema = ExponentialMovingAverage(model, decay=cfg.ema_decay)
+
+    scaler = torch.amp.GradScaler(device=device.type, enabled=needs_scaler)
 
     ctc_loss = nn.CTCLoss(blank=BLANK_INDEX, zero_infinity=True)
 
@@ -233,28 +259,44 @@ def train(cfg: TrainConfig) -> dict:
     try:
         while step < cfg.total_steps:
             batch = next(loader_iter)
-            features = batch["features"].to(device=device, dtype=dtype)
+            features = batch["features"].to(device=device)  # stays float32
             lengths = batch["n_frames"].to(device)
             tokens = batch["tokens"]
             n_tokens = batch["n_tokens"]
 
-            log_probs, lengths_out = model(features, lengths=lengths)
+            with torch.amp.autocast(
+                device_type=device.type,
+                dtype=amp_dtype if amp_dtype is not None else torch.float32,
+                enabled=amp_dtype is not None,
+            ):
+                log_probs, lengths_out = model(features, lengths=lengths)
             assert lengths_out is not None
-            # CTC wants [T, B, V] and a flat target stream.
+            # log_softmax is on the fp32 autocast allow-list, so log_probs
+            # is already float32 regardless of autocast mode. CTC is
+            # computed outside autocast to preserve numerical stability.
             flat_targets = flatten_targets(tokens, n_tokens).to(device)
             loss = ctc_loss(
-                log_probs.transpose(0, 1),
+                log_probs.float().transpose(0, 1),
                 flat_targets,
                 lengths_out,
                 n_tokens.to(device),
             )
 
             optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                model.parameters(), cfg.grad_clip_norm
-            )
-            optimizer.step()
+            if needs_scaler:
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), cfg.grad_clip_norm
+                )
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), cfg.grad_clip_norm
+                )
+                optimizer.step()
             scheduler.step()
             ema.update(model)
 
@@ -275,7 +317,10 @@ def train(cfg: TrainConfig) -> dict:
 
             if step % cfg.eval_every == 0 or step == cfg.total_steps:
                 with ema.applied_to(model):
-                    val_metrics = evaluate(model, val_samples, device, cfg.batch_size)
+                    val_metrics = evaluate(
+                        model, val_samples, device, cfg.batch_size,
+                        amp_dtype=amp_dtype,
+                    )
                 model.train()
                 log({"event": "eval", "step": step, **val_metrics})
 
