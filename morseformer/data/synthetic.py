@@ -27,6 +27,9 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
+import math
+
+from morse_synth.channel import ChannelConfig
 from morse_synth.core import render
 from morse_synth.keying import KeyingConfig
 from morse_synth.operator import OperatorConfig
@@ -49,6 +52,24 @@ class DatasetConfig:
         text_mix:          Category weights for the text sampler.
         frontend:          DSP front-end config.
         keying:            Keying-edge shape config.
+
+        channel_probability: Probability of applying the HF channel at
+                           all. 0.0 = every sample is clean (Phase 2.0
+                           curriculum). 1.0 = every sample sees the
+                           channel. Fractional values mix clean and
+                           channel-affected samples.
+        snr_db_range:      Uniform SNR range (inclusive) in dB when the
+                           channel is applied. Ignored when
+                           ``channel_probability == 0``.
+        rx_filter_bw:      Receiver-side bandpass filter bandwidth (Hz).
+                           ``None`` disables the filter. Only applied
+                           when the channel is applied.
+        operator_element_jitter_range: Uniform range for per-sample
+                           ``OperatorConfig.element_jitter`` (stddev of
+                           per-element length noise, in dot-units).
+                           Default (0, 0) = perfectly mechanical timing.
+        operator_gap_jitter_range:     Same, for gap lengths.
+
         seed:              Base RNG seed. Combined with the worker id
                            so multi-worker DataLoaders get disjoint streams.
         max_text_retries:  If the synthesised audio is longer than the
@@ -67,12 +88,45 @@ class DatasetConfig:
     keying: KeyingConfig = field(
         default_factory=lambda: KeyingConfig(shape="raised_cosine", rise_ms=5.0)
     )
+
+    # --- Phase 2.1 extensions: defaults leave Phase 2.0 behaviour intact ---
+    channel_probability: float = 0.0
+    snr_db_range: tuple[float, float] = (0.0, 30.0)
+    rx_filter_bw: float | None = None
+    operator_element_jitter_range: tuple[float, float] = (0.0, 0.0)
+    operator_gap_jitter_range: tuple[float, float] = (0.0, 0.0)
+
     seed: int = 0
     max_text_retries: int = 5
 
     @property
     def target_samples(self) -> int:
         return int(round(self.target_duration_s * self.sample_rate))
+
+    @classmethod
+    def phase_2_0(cls, **overrides) -> "DatasetConfig":
+        """Explicit Phase 2.0 preset (clean + ideal timing). Equivalent
+        to the bare default constructor — provided for symmetry with
+        :meth:`phase_2_1` and for readability at call sites."""
+        return cls(**overrides)
+
+    @classmethod
+    def phase_2_1(cls, **overrides) -> "DatasetConfig":
+        """Moderate-noise curriculum: channel on every sample, SNR
+        uniform in [0, 30] dB, mild operator jitter, RX bandpass at
+        500 Hz. These are the defaults used for the Phase 2.1 training
+        pass that produces the benchmark number against the
+        rule-based baseline.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.05),
+            operator_gap_jitter_range=(0.0, 0.10),
+        )
+        base.update(overrides)
+        return cls(**base)
 
 
 def _pad_or_truncate(audio: np.ndarray, target: int) -> np.ndarray:
@@ -112,6 +166,39 @@ class SyntheticCWDataset(IterableDataset):
         while True:
             yield self._generate_one(rng)
 
+    def _sample_operator(self, rng: np.random.Generator, wpm: float) -> OperatorConfig:
+        lo_e, hi_e = self.cfg.operator_element_jitter_range
+        lo_g, hi_g = self.cfg.operator_gap_jitter_range
+        element_jitter = 0.0 if hi_e <= lo_e else float(rng.uniform(lo_e, hi_e))
+        gap_jitter = 0.0 if hi_g <= lo_g else float(rng.uniform(lo_g, hi_g))
+        # Derive a per-sample operator seed so that timing is reproducible
+        # given the parent RNG state.
+        op_seed = int(rng.integers(0, 2**31 - 1))
+        return OperatorConfig(
+            wpm=wpm,
+            element_jitter=element_jitter,
+            gap_jitter=gap_jitter,
+            seed=op_seed,
+        )
+
+    def _sample_channel(
+        self, rng: np.random.Generator
+    ) -> ChannelConfig | None:
+        cfg = self.cfg
+        if cfg.channel_probability <= 0.0:
+            return None
+        if cfg.channel_probability < 1.0 and rng.random() >= cfg.channel_probability:
+            return None
+        lo, hi = cfg.snr_db_range
+        snr_db = float(rng.uniform(lo, hi)) if hi > lo else float(lo)
+        ch_seed = int(rng.integers(0, 2**31 - 1))
+        return ChannelConfig(
+            snr_db=snr_db,
+            rx_filter_bw=cfg.rx_filter_bw,
+            rx_filter_centre=cfg.freq_hz,
+            seed=ch_seed,
+        )
+
     def _generate_one(self, rng: np.random.Generator) -> dict:
         cfg = self.cfg
         wpm = float(rng.uniform(*cfg.wpm_range))
@@ -120,11 +207,13 @@ class SyntheticCWDataset(IterableDataset):
         audio: np.ndarray | None = None
         for _ in range(cfg.max_text_retries):
             text = sample_text(rng, cfg.text_mix)
+            operator = self._sample_operator(rng, wpm)
+            channel = self._sample_channel(rng)
             audio = render(
                 text,
-                operator=OperatorConfig(wpm=wpm),
+                operator=operator,
                 keying=cfg.keying,
-                channel=None,            # Phase 2.0: clean audio
+                channel=channel,
                 freq=cfg.freq_hz,
                 sample_rate=cfg.sample_rate,
             )
