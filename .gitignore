@@ -54,3 +54,4 @@ Thumbs.db
 *.pem
 api_key.txt
 apikey
+checkpoints/
