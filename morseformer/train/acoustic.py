@@ -31,6 +31,7 @@ from morseformer.data.validation import (
     ValidationConfig,
     ValidationSample,
     build_clean_validation,
+    build_snr_ladder_validation,
 )
 from morseformer.models.acoustic import AcousticConfig, AcousticModel
 from morseformer.train.ema import ExponentialMovingAverage
@@ -56,6 +57,13 @@ class TrainConfig:
     validation: ValidationConfig = field(
         default_factory=lambda: ValidationConfig(n_per_wpm=40)
     )
+    # When ``validation_snrs`` is non-empty, the validation set is the
+    # (WPM × SNR) ladder produced by ``build_snr_ladder_validation`` —
+    # each cell gets ``validation.n_per_wpm`` samples. When empty, the
+    # validation set is the clean set produced by
+    # ``build_clean_validation``.
+    validation_snrs: tuple[float, ...] = ()
+    validation_rx_filter_bw: float | None = 500.0
 
     # --- optimisation ---
     peak_lr: float = 3.0e-4
@@ -148,6 +156,7 @@ def evaluate(
     batch_size: int,
     amp_dtype: torch.dtype | None = None,
 ) -> dict:
+    import math
     from eval.metrics import character_error_rate, word_error_rate
 
     model.eval()
@@ -155,6 +164,7 @@ def evaluate(
     total_wer = 0.0
     count = 0
     per_wpm_cer: dict[float, list[float]] = {}
+    per_snr_cer: dict[float, list[float]] = {}
 
     for batch in _val_batches(val_samples, batch_size):
         features = batch["features"].to(device)
@@ -179,13 +189,25 @@ def evaluate(
             total_cer += cer
             total_wer += wer
             per_wpm_cer.setdefault(ref_sample.wpm, []).append(cer)
+            per_snr_cer.setdefault(ref_sample.snr_db, []).append(cer)
             count += 1
+
+    # JSON doesn't support +inf; encode as the string "inf" for the log.
+    def _snr_key(s: float) -> float | str:
+        return "inf" if math.isinf(s) else s
 
     return {
         "cer": total_cer / count,
         "wer": total_wer / count,
         "per_wpm_cer": {
             wpm: sum(cers) / len(cers) for wpm, cers in sorted(per_wpm_cer.items())
+        },
+        "per_snr_cer": {
+            _snr_key(snr): sum(cers) / len(cers)
+            for snr, cers in sorted(
+                per_snr_cer.items(),
+                key=lambda kv: (math.isinf(kv[0]), kv[0]),
+            )
         },
         "n_samples": count,
     }
@@ -214,7 +236,14 @@ def train(cfg: TrainConfig) -> dict:
         persistent_workers=(cfg.num_workers > 0),
     )
 
-    val_samples = build_clean_validation(cfg.validation)
+    if cfg.validation_snrs:
+        val_samples = build_snr_ladder_validation(
+            tuple(cfg.validation_snrs),
+            cfg=cfg.validation,
+            rx_filter_bw=cfg.validation_rx_filter_bw,
+        )
+    else:
+        val_samples = build_clean_validation(cfg.validation)
 
     # --- model + optim ---
     # Master weights always in float32; AMP handles the forward-pass cast.

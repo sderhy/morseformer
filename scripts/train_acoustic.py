@@ -19,6 +19,7 @@ from pathlib import Path
 
 import torch
 
+from morseformer.data.synthetic import DatasetConfig
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.train.acoustic import TrainConfig, train
 
@@ -41,6 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--d-model", type=int, default=144)
     p.add_argument("--n-layers", type=int, default=8)
     p.add_argument("--n-heads", type=int, default=4)
+    # Curriculum preset — picks the DatasetConfig factory used.
+    p.add_argument("--curriculum", choices=("phase2_0", "phase2_1"),
+                   default="phase2_0",
+                   help="Dataset preset: clean (phase2_0) or moderate noise "
+                        "+ jitter + RX filter (phase2_1).")
+    # SNR-laddered validation. Empty → clean validation.
+    p.add_argument("--validation-snrs", default="",
+                   help="Comma-separated SNR list for SNR-ladder validation, "
+                        "e.g. '+20,+10,+5,0,-5,-10'. Empty = clean val.")
+    p.add_argument("--validation-rx-filter-bw", type=float, default=500.0,
+                   help="RX bandpass BW (Hz) applied to validation ladder "
+                        "samples. 0 or None disables.")
     # Bookkeeping
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--eval-every", type=int, default=1_000)
@@ -48,6 +61,16 @@ def build_parser() -> argparse.ArgumentParser:
                    default=Path("checkpoints/phase2_0"))
     p.add_argument("--seed", type=int, default=0)
     return p
+
+
+def _parse_snrs(spec: str) -> tuple[float, ...]:
+    out: list[float] = []
+    for token in spec.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        out.append(float(token))
+    return tuple(out)
 
 
 def _auto_device() -> str:
@@ -65,8 +88,19 @@ def main(argv: list[str] | None = None) -> int:
     model_cfg = AcousticConfig(
         d_model=args.d_model, n_layers=args.n_layers, n_heads=args.n_heads
     )
+    dataset_cfg = (
+        DatasetConfig.phase_2_1(seed=args.seed)
+        if args.curriculum == "phase2_1"
+        else DatasetConfig.phase_2_0(seed=args.seed)
+    )
+    validation_snrs = _parse_snrs(args.validation_snrs)
+    rx_bw = args.validation_rx_filter_bw if args.validation_rx_filter_bw else None
+
     cfg = TrainConfig(
         model=model_cfg,
+        dataset=dataset_cfg,
+        validation_snrs=validation_snrs,
+        validation_rx_filter_bw=rx_bw,
         peak_lr=args.peak_lr,
         warmup_steps=args.warmup_steps,
         total_steps=args.total_steps,
@@ -81,7 +115,6 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint_dir=args.checkpoint_dir,
         jsonl_log=args.checkpoint_dir / "train.jsonl",
     )
-    cfg.dataset.seed = args.seed
 
     print(f"[train_acoustic] device={device} dtype={args.dtype} "
           f"total_steps={args.total_steps}")
