@@ -37,18 +37,49 @@ The language model is trained from scratch on amateur-radio text: RBN spot archi
 
 ## Current state
 
-- [ ] Phase 0 — evaluation harness, baseline reproduction
-- [ ] Phase 1 — DSP front-end + `morse_synth` channel simulator
+- [x] **Phase 0** — evaluation harness, rule-based baseline decoder
+- [x] **Phase 1** — parametric operator model + HF-channel simulator (AWGN, QRN, QSB, carrier drift, RX filter); SNR-ladder benchmark
 - [ ] Phase 2 — acoustic model (clean + moderate-noise training)
 - [ ] Phase 3 — weak-signal training + RNN-T head + FiLM conditioning
 - [ ] Phase 4 — language-model pretraining + shallow fusion
 - [ ] Phase 5 — real-time WSL CLI on live IC-7300 audio
 - [ ] Phase 6 — GitHub / HuggingFace release, benchmark, paper
 
+## Baseline (rule-based DSP)
+
+SNR-ladder benchmark, 40 samples per bin, WPM uniform in [18, 28], AWGN only.
+This is the number the neural pipeline must beat.
+
+```
+  SNR (dB) |  n  |    CER   |    WER   | Callsign F1
+  ---------+-----+----------+----------+-------------
+      +inf |  40 |   0.0000 |   0.0000 |      1.0000
+     +20.0 |  40 |   0.0000 |   0.0000 |      1.0000
+     +15.0 |  40 |   0.0000 |   0.0000 |      1.0000
+     +10.0 |  40 |   0.0000 |   0.0000 |      1.0000
+      +5.0 |  40 |   0.0058 |   0.0204 |      1.0000
+       0.0 |  40 |   2.5355 |   3.0799 |      0.5750
+      −5.0 |  40 |   5.8327 |   9.6283 |      0.6500
+     −10.0 |  40 |  19.4111 |  23.7179 |      0.5750
+     −15.0 |  40 |  25.1948 |  29.2015 |      0.6250
+```
+
+CER values above 1.0 indicate that the decoder hallucinates characters
+from noise impulses — a well-known failure mode of threshold-based CW
+decoders below 0 dB SNR. The Phase-2 transformer should collapse this
+cliff via probabilistic element scoring and shallow-fusion language
+priors.
+
 ## Quick start
 
 ```bash
-# coming soon — pre-alpha, not yet installable
+git clone git@github.com:sderhy/morseformer.git
+cd morseformer
+pip install -e ".[dev,audio]"
+pytest -q                                            # 57 unit tests, <2 s
+python -m eval.cli --decoder rule_based --dataset sanity
+python -m eval.cli --decoder rule_based --dataset snr_ladder \
+    --snrs="+20,+10,+5,0,-5,-10,-15" --n-per-snr 20
 ```
 
 ## License

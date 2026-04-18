@@ -1,16 +1,53 @@
-"""Phase-0 Morse/CW synthesizer.
+"""Top-level synthesis API.
 
-Clean output only: pure carrier sine at a fixed frequency, raised-cosine
-envelope at element edges, deterministic PARIS-standard timing. Noise
-injection, operator-timing variability, and HF-channel simulation (QRN,
-QRM, QSB, multipath, drift) land in later phases under this same package.
+The full Phase-1 pipeline factors cleanly into three stages, each with
+its own configuration object:
+
+    operator  (morse_synth.operator)   text  →  timed events
+    keying    (morse_synth.keying)     events → clean audio
+    channel   (morse_synth.channel)    clean  → noisy audio
+
+`render()` is the composite entry-point. `synthesize()` is a thin,
+backward-compatible wrapper that produces clean audio with the same
+signature and output as Phase 0.
 """
 
 from __future__ import annotations
 
 import numpy as np
 
-from morseformer.core.morse_table import MORSE_TABLE, unit_seconds
+from morse_synth.channel import ChannelConfig, apply_channel
+from morse_synth.keying import KeyingConfig, render_events
+from morse_synth.operator import OperatorConfig, build_events
+
+
+def render(
+    text: str,
+    *,
+    operator: OperatorConfig | None = None,
+    keying: KeyingConfig | None = None,
+    channel: ChannelConfig | None = None,
+    freq: float = 600.0,
+    sample_rate: int = 8000,
+    amplitude: float = 0.5,
+    tail_ms: float = 50.0,
+) -> np.ndarray:
+    """Render a message through the full operator + keying + channel pipeline."""
+    operator = operator or OperatorConfig()
+    keying = keying or KeyingConfig()
+    channel = channel or ChannelConfig()
+
+    events = build_events(text, operator)
+    clean = render_events(
+        events,
+        keying=keying,
+        freq=freq,
+        sample_rate=sample_rate,
+        amplitude=amplitude,
+        tail_ms=tail_ms,
+        wpm=operator.wpm,
+    )
+    return apply_channel(clean, sample_rate, channel)
 
 
 def synthesize(
@@ -23,71 +60,30 @@ def synthesize(
     amplitude: float = 0.5,
     tail_ms: float = 50.0,
 ) -> np.ndarray:
-    """Render a text message as clean CW audio.
+    """Clean-only convenience wrapper preserved from Phase 0.
 
-    Args:
-        text: Message (case-insensitive). Spaces separate words. Characters
-            absent from the Morse table are silently dropped.
-        wpm: Speed in words per minute (PARIS standard).
-        freq: Carrier frequency in Hz (typical ham sidetones: 400-800 Hz).
-        sample_rate: Audio sample rate in Hz.
-        rise_ms: Raised-cosine rise/fall time at element edges, in ms.
-            Shapes the keying click bandwidth.
-        amplitude: Peak amplitude in [0, 1].
-        tail_ms: Silent tail appended after the last element, in ms.
-
-    Returns:
-        float32 1-D numpy array of audio samples.
+    Equivalent to `render()` with default (ideal) operator, a raised-cosine
+    keying shape, and no channel effects. Kept so that Phase-0 tests and
+    external callers that only want clean CW do not have to know about
+    the configuration dataclasses.
     """
-    if not text.strip():
-        return np.zeros(int(tail_ms / 1000.0 * sample_rate), dtype=np.float32)
+    if wpm <= 0:
+        raise ValueError(f"WPM must be positive, got {wpm}")
 
-    u_sec = unit_seconds(wpm)
-    u_samples = int(round(u_sec * sample_rate))
-    if u_samples < 2:
+    unit_samples = int(round(1.2 / wpm * sample_rate))
+    if unit_samples < 2:
         raise ValueError(
             f"WPM too fast for sample_rate={sample_rate}: "
-            f"one unit would be {u_samples} samples"
+            f"one unit would be {unit_samples} samples"
         )
 
-    # Build the keying mask at unit resolution: a flat list where each entry is
-    # either True (key down) or False (key up) for exactly one dot-unit.
-    mask_units: list[bool] = []
-    for word_i, word in enumerate(text.upper().split()):
-        if word_i > 0:
-            mask_units.extend([False] * 7)  # inter-word gap
-        for char_i, ch in enumerate(word):
-            code = MORSE_TABLE.get(ch)
-            if code is None:
-                continue
-            if char_i > 0:
-                mask_units.extend([False] * 3)  # inter-character gap
-            for elem_i, elem in enumerate(code):
-                if elem_i > 0:
-                    mask_units.append(False)  # inter-element gap
-                elem_units = 1 if elem == "." else 3
-                mask_units.extend([True] * elem_units)
-
-    if not mask_units:
-        return np.zeros(int(tail_ms / 1000.0 * sample_rate), dtype=np.float32)
-
-    # Expand mask to sample resolution, plus silent tail.
-    n_body = len(mask_units) * u_samples
-    n_tail = int(round(tail_ms / 1000.0 * sample_rate))
-    envelope = np.zeros(n_body + n_tail, dtype=np.float32)
-    mask = np.array(mask_units, dtype=bool)
-    # Vectorised fill: each unit contributes `u_samples` samples.
-    expanded = np.repeat(mask, u_samples).astype(np.float32)
-    envelope[: len(expanded)] = expanded
-
-    # Smooth edges with a Hann window of length 2*rise_n+1 (acts as a
-    # raised-cosine low-pass on the rectangular keying mask).
-    rise_n = max(1, int(round(rise_ms / 1000.0 * sample_rate)))
-    kernel = np.hanning(2 * rise_n + 1).astype(np.float32)
-    kernel /= kernel.sum()
-    envelope = np.convolve(envelope, kernel, mode="same")
-
-    # Carrier.
-    t = np.arange(envelope.size, dtype=np.float32) / sample_rate
-    carrier = np.sin(2.0 * np.pi * freq * t).astype(np.float32)
-    return (amplitude * envelope * carrier).astype(np.float32)
+    return render(
+        text,
+        operator=OperatorConfig(wpm=wpm),
+        keying=KeyingConfig(shape="raised_cosine", rise_ms=rise_ms),
+        channel=None,
+        freq=freq,
+        sample_rate=sample_rate,
+        amplitude=amplitude,
+        tail_ms=tail_ms,
+    )
