@@ -167,6 +167,28 @@ class DatasetConfig:
         base.update(overrides)
         return cls(**base)
 
+    @classmethod
+    def phase_2_2(cls, **overrides) -> "DatasetConfig":
+        """Phase 2.1 curriculum with widened operator-jitter ranges.
+
+        The Phase 2.1 model exposed a jitter-OOD gap at low SNR: the
+        benchmark generator (eval.datasets.generate_noisy) uses
+        element_jitter=0.08 and gap_jitter=0.15, roughly 2× our
+        Phase 2.1 training means. Phase 2.2 trains on a jitter
+        distribution that spans the benchmark operator profile
+        (element ∈ [0, 0.12], gap ∈ [0, 0.20]) so the model
+        generalises to realistic hand-keyed timing.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.12),
+            operator_gap_jitter_range=(0.0, 0.20),
+        )
+        base.update(overrides)
+        return cls(**base)
+
 
 def _pad_or_truncate(audio: np.ndarray, target: int) -> np.ndarray:
     """Trim to `target` samples or zero-pad at the end."""

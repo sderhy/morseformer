@@ -43,10 +43,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--n-layers", type=int, default=8)
     p.add_argument("--n-heads", type=int, default=4)
     # Curriculum preset — picks the DatasetConfig factory used.
-    p.add_argument("--curriculum", choices=("phase2_0", "phase2_1"),
+    p.add_argument("--curriculum",
+                   choices=("phase2_0", "phase2_1", "phase2_2"),
                    default="phase2_0",
-                   help="Dataset preset: clean (phase2_0) or moderate noise "
-                        "+ jitter + RX filter (phase2_1).")
+                   help="Dataset preset: clean (phase2_0), moderate noise + "
+                        "mild jitter (phase2_1), or moderate noise + wider "
+                        "jitter matching the benchmark operator profile "
+                        "(phase2_2).")
     # SNR-laddered validation. Empty → clean validation.
     p.add_argument("--validation-snrs", default="",
                    help="Comma-separated SNR list for SNR-ladder validation, "
@@ -96,11 +99,12 @@ def main(argv: list[str] | None = None) -> int:
     model_cfg = AcousticConfig(
         d_model=args.d_model, n_layers=args.n_layers, n_heads=args.n_heads
     )
-    dataset_cfg = (
-        DatasetConfig.phase_2_1(seed=args.seed)
-        if args.curriculum == "phase2_1"
-        else DatasetConfig.phase_2_0(seed=args.seed)
-    )
+    if args.curriculum == "phase2_2":
+        dataset_cfg = DatasetConfig.phase_2_2(seed=args.seed)
+    elif args.curriculum == "phase2_1":
+        dataset_cfg = DatasetConfig.phase_2_1(seed=args.seed)
+    else:
+        dataset_cfg = DatasetConfig.phase_2_0(seed=args.seed)
     validation_snrs = _parse_snrs(args.validation_snrs)
     rx_bw = args.validation_rx_filter_bw if args.validation_rx_filter_bw else None
 
