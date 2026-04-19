@@ -40,8 +40,8 @@ The language model is trained from scratch on amateur-radio text: RBN spot archi
 - [x] **Phase 0** — evaluation harness, rule-based baseline decoder
 - [x] **Phase 1** — parametric operator model + HF-channel simulator (AWGN, QRN, QSB, carrier drift, RX filter); SNR-ladder benchmark
 - [x] **Phase 2.0** — acoustic model (Conformer + RoPE, 3.9 M params, CTC head) trained on clean audio; 1.17 % CER on a balanced 200-sample clean validation set (0 % on 4 of 5 WPM bins at 40 samples each)
-- [x] **Phase 2.1** — moderate-noise training (AWGN ∈ [0, 30] dB + RX filter + mild operator jitter); beats the rule-based baseline by **33× at 0 dB, 7× at −5 dB, 16× at −10 dB, 22× at −15 dB** on the official SNR-ladder benchmark. Known limitation: jitter OOD at low SNR (see below) — to be closed by Phase 2.2 retraining with a wider jitter distribution.
-- [ ] Phase 2.2 — widen the training jitter distribution (element ∈ [0, 0.12], gap ∈ [0, 0.20]) so the model generalises to the benchmark operator profile.
+- [x] **Phase 2.1** — moderate-noise training (AWGN ∈ [0, 30] dB + RX filter + mild operator jitter); beats the rule-based baseline by **33× at 0 dB, 7× at −5 dB, 16× at −10 dB, 22× at −15 dB** on the official SNR-ladder benchmark. Recommended release checkpoint.
+- [x] **Phase 2.2** — same architecture trained with widened operator jitter (element ∈ [0, 0.12], gap ∈ [0, 0.20]) for 50 k steps. A deliberate ablation: the wider distribution makes the model more conservative (stops hallucinating on pure noise at −10 / −15 dB) but loses high-SNR precision. Kept for paper reference; does not supersede 2.1.
 - [ ] Phase 3 — weak-signal training + RNN-T head + FiLM conditioning
 - [ ] Phase 4 — language-model pretraining + shallow fusion
 - [ ] Phase 5 — real-time WSL CLI on live IC-7300 audio
@@ -162,8 +162,39 @@ official benchmark CER at −5 dB (79 %) is a **jitter-generalisation
 shortfall**. The benchmark generator (`eval.datasets.generate_noisy`)
 uses `OperatorConfig(element_jitter=0.08, gap_jitter=0.15)`, i.e.
 ~2 × the training distribution's mean. Above +5 dB the model handles
-this gap easily; below −5 dB it does not. Closing this gap is
-Phase 2.2.
+this gap easily; below −5 dB it does not.
+
+## Phase 2.2 (widened jitter) — a lateral move, not a win
+
+Phase 2.2 trained the same architecture with `element_jitter ∈ U(0, 0.12)`
+and `gap_jitter ∈ U(0, 0.20)` (spans the benchmark operator profile),
+50 k steps, other hyperparameters unchanged. The goal was to close the
+jitter-OOD gap. Result: the model became **more conservative** — less
+hallucination on noise-only audio at −10 and −15 dB, but measurably
+less sharp at high SNR. Honest side-by-side on the official benchmark:
+
+```
+  SNR (dB) |  Phase 2.1 CER  |  Phase 2.2 CER   (40 samples / bin)
+  ---------+-----------------+----------------
+     +20.0 |     0.0252      |     0.0891
+     +10.0 |     0.0153      |     0.0758
+      +5.0 |     0.0254      |     0.0996
+      +0.0 |     0.0774      |     0.3197
+      -5.0 |     0.7904      |     0.9597
+     -10.0 |     1.2366      |     0.9154   ← first run below 1.0
+     -15.0 |     1.1681      |     0.9468   ← first run below 1.0
+```
+
+What this says: a 3.9 M-parameter CTC model trained on a wider
+jitter distribution for the same 50 k steps learns a blunter posterior
+— it gives up high-SNR precision to stop inventing tokens in pure
+noise. More capacity, more training time, a curriculum that widens
+gradually, or a sequence-level head (RNN-T) are the structural ways
+to pick up both ends at once; Phase 3 tackles this.
+
+**The Phase 2.1 checkpoint remains the recommended release** for the
+clean-to-moderate SNR range. Phase 2.2 is archived for ablation /
+paper reference but does not supersede 2.1.
 
 ## Quick start
 
