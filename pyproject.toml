@@ -38,7 +38,7 @@ dependencies = [
 
 [project.optional-dependencies]
 audio = ["pasimple>=0.0.3"]
-ml = ["torch>=2.1"]
+ml = ["torch>=2.1", "torchaudio>=2.1"]
 dev = ["pytest>=7", "ruff>=0.1", "matplotlib>=3.7"]
 training = ["torch>=2.1", "wandb", "hydra-core", "tqdm"]
 

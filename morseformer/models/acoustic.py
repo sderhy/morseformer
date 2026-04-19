@@ -68,6 +68,37 @@ class AcousticModel(nn.Module):
 
         init_parameters(self)
 
+    def encode(
+        self,
+        features: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        """Run the sub-sampling + Conformer stack, returning the
+        pre-head encoder representation.
+
+        This is the shared trunk used both by the CTC head (forward())
+        and by the RNN-T joint decoder (see :mod:`morseformer.models.rnnt`).
+
+        Returns:
+            enc_out:     `[B, T', d_model]` float32 encoder features.
+            lengths_out: `[B]` post-subsample valid lengths, or ``None``
+                         when ``lengths`` was ``None``.
+        """
+        x = self.subsample(features)  # [B, T', D]
+        x = self.input_dropout(x)
+
+        padding_mask: torch.Tensor | None = None
+        lengths_out: torch.Tensor | None = None
+        if lengths is not None:
+            lengths_out = ConvSubsampling.subsampled_lengths(lengths)
+            t_out = x.size(1)
+            idx = torch.arange(t_out, device=x.device).unsqueeze(0)
+            padding_mask = idx >= lengths_out.unsqueeze(1)
+
+        for block in self.blocks:
+            x = block(x, padding_mask=padding_mask)
+        return x, lengths_out
+
     def forward(
         self,
         features: torch.Tensor,
@@ -85,21 +116,8 @@ class AcousticModel(nn.Module):
             lengths_out: `[B]` post-subsample valid lengths, or `None`
                          when `lengths` was `None`.
         """
-        x = self.subsample(features)  # [B, T', D]
-        x = self.input_dropout(x)
-
-        padding_mask: torch.Tensor | None = None
-        lengths_out: torch.Tensor | None = None
-        if lengths is not None:
-            lengths_out = ConvSubsampling.subsampled_lengths(lengths)
-            t_out = x.size(1)
-            idx = torch.arange(t_out, device=x.device).unsqueeze(0)
-            padding_mask = idx >= lengths_out.unsqueeze(1)
-
-        for block in self.blocks:
-            x = block(x, padding_mask=padding_mask)
-
-        logits = self.head(x)
+        enc_out, lengths_out = self.encode(features, lengths)
+        logits = self.head(enc_out)
         return torch.log_softmax(logits, dim=-1), lengths_out
 
     def num_parameters(self) -> int:
