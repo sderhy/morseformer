@@ -40,7 +40,8 @@ The language model is trained from scratch on amateur-radio text: RBN spot archi
 - [x] **Phase 0** — evaluation harness, rule-based baseline decoder
 - [x] **Phase 1** — parametric operator model + HF-channel simulator (AWGN, QRN, QSB, carrier drift, RX filter); SNR-ladder benchmark
 - [x] **Phase 2.0** — acoustic model (Conformer + RoPE, 3.9 M params, CTC head) trained on clean audio; 1.17 % CER on a balanced 200-sample clean validation set (0 % on 4 of 5 WPM bins at 40 samples each)
-- [ ] Phase 2.1 — moderate-noise training (AWGN, SNR ∈ [0, 30] dB, operator jitter); target: beat the rule-based baseline across the SNR ladder
+- [x] **Phase 2.1** — moderate-noise training (AWGN ∈ [0, 30] dB + RX filter + mild operator jitter); beats the rule-based baseline by **33× at 0 dB, 7× at −5 dB, 16× at −10 dB, 22× at −15 dB** on the official SNR-ladder benchmark. Known limitation: jitter OOD at low SNR (see below) — to be closed by Phase 2.2 retraining with a wider jitter distribution.
+- [ ] Phase 2.2 — widen the training jitter distribution (element ∈ [0, 0.12], gap ∈ [0, 0.20]) so the model generalises to the benchmark operator profile.
 - [ ] Phase 3 — weak-signal training + RNN-T head + FiLM conditioning
 - [ ] Phase 4 — language-model pretraining + shallow fusion
 - [ ] Phase 5 — real-time WSL CLI on live IC-7300 audio
@@ -101,6 +102,68 @@ The 28 WPM residual is concentrated on 1–3 character Q-codes where the
 characters on the silent lead-in. Noisy-condition training (Phase 2.1)
 will expose the same edge case to ambient-noise data and should
 regularise it away.
+
+## Phase 2.1 result (moderate-noise acoustic model)
+
+Same architecture as Phase 2.0 (Conformer + RoPE, 3.9 M params).
+Trained for 50 k steps on the noisy curriculum — AWGN at SNR ∈ U(0, 30)
+dB on every sample, 500 Hz RX bandpass at 600 Hz centre, mild operator
+jitter (element ∈ U(0, 0.05) dot-units, gap ∈ U(0, 0.10)). Same optim,
+same AMP config, same 6 s utterance, WPM ∈ U(16, 28). One crash in the
+middle of the run, cleanly recovered via `--resume-from last.pt` with
+zero lost progress — see `scripts/train_acoustic.py --help`. RTX 3060
+6 GB, ≈ 3.5 h wall time total.
+
+**Official SNR-ladder benchmark** (`python -m eval.cli --decoder neural
+--checkpoint checkpoints/phase2_1_final.pt --dataset snr_ladder
+--snrs +20,+15,+10,+5,0,-5,-10,-15 --n-per-snr 40`):
+
+```
+  SNR (dB) |  n  |    CER   |    WER   | Callsign F1   (neural)
+  ---------+-----+----------+----------+--------------
+     +20.0 |  40 |   0.0252 |   0.0708 |      1.0000
+     +15.0 |  40 |   0.0297 |   0.0717 |      1.0000
+     +10.0 |  40 |   0.0153 |   0.0542 |      1.0000
+      +5.0 |  40 |   0.0254 |   0.0627 |      1.0000
+      +0.0 |  40 |   0.0774 |   0.1977 |      0.9167
+      -5.0 |  40 |   0.7904 |   1.2183 |      0.6750
+     -10.0 |  40 |   1.2366 |   1.8283 |      0.7000
+     -15.0 |  40 |   1.1681 |   1.8569 |      0.7000
+```
+
+Speed-up factor over the rule-based baseline, same bench, same seed:
+
+```
+  SNR (dB) |  CER ratio (baseline / neural)
+  ---------+-------------------------------
+      +0.0 |   2.54 / 0.08  =  33 ×
+      -5.0 |   5.83 / 0.79  =   7 ×
+     -10.0 |  19.41 / 1.24  =  16 ×
+     -15.0 |  25.19 / 1.17  =  22 ×
+```
+
+**In-distribution validation** (5 WPM × 6 SNR × 40 = 1200 samples,
+text mix identical to training, jitter distribution identical to
+training):
+
+```
+  SNR (dB) |    CER
+  ---------+--------
+     +20.0 |  0.0000
+     +10.0 |  0.0000
+      +5.0 |  0.0000
+      +0.0 |  0.0000
+      -5.0 |  0.0213
+     -10.0 |  0.8528
+```
+
+The 40 × gap between the in-distribution CER at −5 dB (2.1 %) and the
+official benchmark CER at −5 dB (79 %) is a **jitter-generalisation
+shortfall**. The benchmark generator (`eval.datasets.generate_noisy`)
+uses `OperatorConfig(element_jitter=0.08, gap_jitter=0.15)`, i.e.
+~2 × the training distribution's mean. Above +5 dB the model handles
+this gap easily; below −5 dB it does not. Closing this gap is
+Phase 2.2.
 
 ## Quick start
 
