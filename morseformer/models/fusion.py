@@ -1,18 +1,31 @@
-"""Shallow fusion of the RNN-T acoustic model with the Phase-4 LM.
+"""External-LM fusion for the Phase-3 RNN-T acoustic model.
 
-Shallow fusion combines the per-step log-probabilities of a trained
-acoustic model with those of a separately-trained language model at
-decode time:
+Two fusion schemes are implemented, selected by the fusion weights:
 
-    log P_fused(y_u | x, y_{<u}) =
-          log P_ac(y_u | x, y_{<u}) + λ · log P_lm(y_u | y_{<u})
+* **Shallow fusion** (``ilm_weight = 0``): the baseline approach,
 
-with ``λ`` tuned on a held-out set. The blank emission is *not*
-rescored — the LM does not model the acoustic "stay at this frame"
-signal, and the RNN-T prediction network already encodes the
-non-blank history the LM would need.
+      log P_fused(y_u | x, y_{<u}) =
+          log P_ac(y_u | x, y_{<u}) + λ_lm · log P_lm(y_u | y_{<u})
 
-Reference: Gulati et al. 2020 (Conformer), section 3.6.
+  on non-blank slots only. Reference: Gulati et al. 2020 (Conformer),
+  section 3.6.
+
+* **Density-ratio / ILME fusion** (``ilm_weight > 0``): subtracts an
+  estimate of the RNN-T's *internal* LM before adding the external LM,
+
+      log P_fused = log P_ac + λ_lm · log P_lm − λ_ilm · log P_ilm
+
+  on non-blank slots. The internal LM is estimated by running the joint
+  network with a zeroed encoder frame — this leaves only the
+  prediction-network contribution, which is the RNN-T's implicit text
+  prior. Subtracting it avoids the "ILM contamination" failure mode in
+  which naive shallow fusion double-counts the text prior and wipes out
+  the external LM's gain. Reference: Meng et al. 2021,
+  *Internal Language Model Estimation for Domain-Adaptive End-to-End
+  Speech Recognition* (arXiv:2011.01991).
+
+The blank emission is driven purely by the acoustic joint in both
+schemes — the LM does not model the "stay at this frame" signal.
 """
 
 from __future__ import annotations
@@ -29,9 +42,18 @@ from morseformer.models.rnnt import RnntModel
 
 @dataclass
 class FusionConfig:
-    """Shallow-fusion hyperparameters."""
+    """Fusion hyperparameters.
+
+    ``fusion_weight`` (a.k.a. ``λ_lm``) scales the external-LM prior.
+    ``ilm_weight`` (a.k.a. ``λ_ilm``) scales the internal-LM estimate
+    that is *subtracted* to cancel the RNN-T prediction network's own
+    text prior. Setting ``ilm_weight = 0`` recovers vanilla shallow
+    fusion; setting ``fusion_weight = 0`` and ``ilm_weight = 0``
+    recovers the AC-only greedy RNN-T decoder.
+    """
 
     fusion_weight: float = 0.2
+    ilm_weight: float = 0.0
     # Maximum tokens to emit at a single encoder frame — same as the
     # RNN-T greedy decoder default, prevents infinite emit loops.
     max_emit_per_frame: int = 5
@@ -49,11 +71,20 @@ def greedy_rnnt_decode_with_lm(
     lengths: torch.Tensor | None = None,
     fusion_cfg: FusionConfig | None = None,
 ) -> list[list[int]]:
-    """Greedy RNN-T decoding with a shallow-fusion LM prior.
+    """Greedy RNN-T decoding with external-LM fusion.
 
-    Differs from :meth:`RnntModel.greedy_rnnt_decode` only in how the
-    per-(t, u) logits are scored: the LM's log-probabilities are added
-    to every non-blank slot, weighted by ``fusion_cfg.fusion_weight``.
+    Per-(t, u) non-blank logits are rescored as
+
+        log P_fused = log P_ac + λ_lm · log P_lm − λ_ilm · log P_ilm
+
+    where ``λ_lm = fusion_cfg.fusion_weight``,
+    ``λ_ilm = fusion_cfg.ilm_weight``, and ``P_ilm`` is the joint
+    output with a zeroed encoder frame (an estimate of the RNN-T
+    internal LM). Blank emissions are scored by the acoustic joint only.
+
+    Setting ``λ_ilm = 0`` recovers vanilla shallow fusion; setting
+    ``λ_lm = 0`` and ``λ_ilm = 0`` recovers
+    :meth:`RnntModel.greedy_rnnt_decode`.
 
     Args:
         rnnt: trained :class:`RnntModel`. Caller is responsible for
@@ -62,8 +93,8 @@ def greedy_rnnt_decode_with_lm(
             the 46-token vocabulary.
         features: ``[B, T, F]`` float32 input audio features.
         lengths:  ``[B]`` valid frame counts, or ``None``.
-        fusion_cfg: fusion weight and emission limits (defaults applied
-                    when ``None``).
+        fusion_cfg: fusion weights and emission limits (defaults
+                    applied when ``None``).
 
     Returns:
         ``list[list[int]]`` — one list of non-blank token ids per batch
@@ -95,6 +126,20 @@ def greedy_rnnt_decode_with_lm(
     # so argmax for blank is driven purely by the acoustic joint.
     non_blank_mask = torch.ones(vocab_size, device=enc_out.device)
     non_blank_mask[blank] = 0.0
+
+    # Zero-encoder frame used to estimate the internal LM. Reused across
+    # every emission to avoid re-allocation. Only materialised when ILM
+    # subtraction is actually enabled.
+    use_ilm = cfg.ilm_weight != 0.0
+    zero_frame = (
+        torch.zeros(
+            (1, 1, enc_out.size(-1)),
+            device=enc_out.device,
+            dtype=enc_out.dtype,
+        )
+        if use_ilm
+        else None
+    )
 
     for i in range(b):
         t_valid = int(enc_lengths[i].item())
@@ -130,10 +175,18 @@ def greedy_rnnt_decode_with_lm(
                     dim=-1,
                 )                                            # [V]
 
-                # Add weighted LM prior to non-blank slots only.
+                # Add weighted external LM prior to non-blank slots.
                 fused = ac_logprobs + cfg.fusion_weight * (
                     lm_logprobs * non_blank_mask
                 )
+                if use_ilm:
+                    ilm_logits = rnnt.joint(zero_frame, pred_out)  # [1,1,1,V]
+                    ilm_logprobs = F.log_softmax(
+                        ilm_logits[0, 0, 0].float(), dim=-1
+                    )
+                    fused = fused - cfg.ilm_weight * (
+                        ilm_logprobs * non_blank_mask
+                    )
                 tok = int(fused.argmax().item())
                 if tok == blank:
                     break

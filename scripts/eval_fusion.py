@@ -1,15 +1,17 @@
-"""Evaluate shallow fusion of a trained RNN-T model with a trained LM.
+"""Evaluate LM fusion of a trained RNN-T model.
 
-Sweeps several fusion weights over the same SNR-ladder validation set
-we use for the acoustic model and reports CER / WER, per-SNR CER, and
-the absolute / relative improvement against the no-fusion baseline.
+Sweeps (λ_lm, λ_ilm) fusion-weight pairs over the SNR-ladder
+validation set and reports CER / WER, per-SNR CER, and absolute /
+relative improvement against the λ_lm = 0 baseline. λ_ilm = 0
+corresponds to vanilla shallow fusion; λ_ilm > 0 is ILME /
+density-ratio fusion (see morseformer/models/fusion.py).
 
 Usage::
 
     python -m scripts.eval_fusion \
         --rnnt-ckpt checkpoints/phase3_0/best_rnnt.pt \
         --lm-ckpt   checkpoints/lm_phase4_0/best.pt \
-        --fusion-weights "0.0,0.1,0.2,0.3,0.5" \
+        --fusion-points "0.0:0.0,0.2:0.0,0.2:0.2,0.3:0.3" \
         --snrs "+20,+10,+5,0,-5,-10"
 """
 
@@ -41,7 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--rnnt-ckpt", type=Path, required=True)
     p.add_argument("--lm-ckpt", type=Path, required=True)
-    p.add_argument("--fusion-weights", default="0.0,0.1,0.2,0.3,0.5")
+    p.add_argument(
+        "--fusion-points",
+        default="0.0:0.0,0.2:0.0,0.1:0.1,0.2:0.2,0.3:0.3,0.5:0.5",
+        help="Comma-separated list of 'λ_lm:λ_ilm' pairs. "
+             "λ_ilm=0 is shallow fusion; λ_ilm>0 is ILME density-ratio.",
+    )
     p.add_argument("--snrs", default="+20,+10,+5,0,-5,-10")
     p.add_argument("--rx-filter-bw", type=float, default=500.0)
     p.add_argument("--n-per-wpm", type=int, default=40)
@@ -64,6 +71,22 @@ def _parse_floats(spec: str) -> tuple[float, ...]:
         t = t.strip()
         if t:
             out.append(float(t))
+    return tuple(out)
+
+
+def _parse_fusion_points(spec: str) -> tuple[tuple[float, float], ...]:
+    """Parse a 'lm:ilm,lm:ilm,...' CSV into (λ_lm, λ_ilm) pairs."""
+    out: list[tuple[float, float]] = []
+    for t in spec.split(","):
+        t = t.strip()
+        if not t:
+            continue
+        if ":" not in t:
+            raise ValueError(
+                f"fusion-points entry must be 'λ_lm:λ_ilm', got {t!r}"
+            )
+        lm_s, ilm_s = t.split(":", 1)
+        out.append((float(lm_s), float(ilm_s)))
     return tuple(out)
 
 
@@ -129,18 +152,21 @@ def _val_batches(samples: list[ValidationSample], batch_size: int) -> list[dict]
     return out
 
 
-def _evaluate_weight(
+def _evaluate_point(
     rnnt: RnntModel,
     lm: GptLM,
     val_samples: list[ValidationSample],
     batch_size: int,
     device: torch.device,
-    fusion_weight: float,
+    lm_weight: float,
+    ilm_weight: float,
     lm_temperature: float,
 ) -> dict:
     from eval.metrics import character_error_rate, word_error_rate
     fusion_cfg = FusionConfig(
-        fusion_weight=fusion_weight, lm_temperature=lm_temperature
+        fusion_weight=lm_weight,
+        ilm_weight=ilm_weight,
+        lm_temperature=lm_temperature,
     )
     cer_sum = 0.0
     wer_sum = 0.0
@@ -162,7 +188,8 @@ def _evaluate_weight(
             per_snr.setdefault(ref_sample.snr_db, []).append(cer)
             count += 1
     return {
-        "fusion_weight": fusion_weight,
+        "lm_weight": lm_weight,
+        "ilm_weight": ilm_weight,
         "cer": cer_sum / count,
         "wer": wer_sum / count,
         "per_snr": {
@@ -193,28 +220,32 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[eval_fusion] val-set: {len(val_samples)} samples "
           f"({val_cfg.n_per_wpm}/wpm × {len(val_cfg.wpm_bins)} wpm × {len(snrs)} snr)")
 
-    weights = _parse_floats(args.fusion_weights)
+    points = _parse_fusion_points(args.fusion_points)
     results: list[dict] = []
-    for w in weights:
-        r = _evaluate_weight(
-            rnnt, lm, val_samples, args.batch_size, device, w,
-            args.lm_temperature,
+    for lm_w, ilm_w in points:
+        r = _evaluate_point(
+            rnnt, lm, val_samples, args.batch_size, device,
+            lm_w, ilm_w, args.lm_temperature,
         )
         results.append(r)
         print(flush=True)
-        print(f"=== fusion_weight = {w:.2f} ===", flush=True)
+        print(
+            f"=== λ_lm={lm_w:.2f}  λ_ilm={ilm_w:.2f} ===", flush=True,
+        )
         print(f"  cer={r['cer']:.4f}  wer={r['wer']:.4f}", flush=True)
         for snr, v in r["per_snr"].items():
             print(f"    SNR={snr:>6}  CER={v:.4f}", flush=True)
 
     baseline = results[0]
     print()
-    print("=== summary (Δ vs baseline) ===")
+    print("=== summary (Δ vs baseline λ_lm=λ_ilm=0) ===")
     for r in results:
         delta = r["cer"] - baseline["cer"]
         rel = (100.0 * delta / baseline["cer"]) if baseline["cer"] else 0.0
-        print(f"  λ={r['fusion_weight']:.2f}  cer={r['cer']:.4f}  "
-              f"Δcer={delta:+.4f} ({rel:+.1f}%)")
+        print(
+            f"  λ_lm={r['lm_weight']:.2f}  λ_ilm={r['ilm_weight']:.2f}  "
+            f"cer={r['cer']:.4f}  Δcer={delta:+.4f} ({rel:+.1f}%)"
+        )
     return 0
 
 
