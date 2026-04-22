@@ -57,6 +57,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Path to a Phase 2 checkpoint (e.g. "
                         "checkpoints/phase2_1/best_cer.pt). EMA weights "
                         "are applied when available.")
+    p.add_argument("--pretrained-rnnt", type=Path, default=None,
+                   help="Path to a Phase 3 RnntModel checkpoint (e.g. "
+                        "checkpoints/phase3_0/best_rnnt.pt). Loaded with "
+                        "strict=False, so a deeper encoder inherits the "
+                        "first N layers and re-inits the rest.")
     # Curriculum
     p.add_argument("--curriculum",
                    choices=("phase2_0", "phase2_1", "phase2_2"),
@@ -129,6 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         ctc_weight=args.ctc_weight,
         rnnt_weight=args.rnnt_weight,
         pretrained_encoder=args.pretrained_encoder,
+        pretrained_rnnt=args.pretrained_rnnt,
         peak_lr=args.peak_lr,
         warmup_steps=args.warmup_steps,
         total_steps=args.total_steps,
@@ -152,6 +158,8 @@ def main(argv: list[str] | None = None) -> int:
           f"rnnt_weight={args.rnnt_weight}")
     if args.pretrained_encoder is not None:
         print(f"[train_rnnt] bootstrap encoder from {args.pretrained_encoder}")
+    if args.pretrained_rnnt is not None:
+        print(f"[train_rnnt] bootstrap full RNN-T from {args.pretrained_rnnt}")
     print(f"[train_rnnt] checkpoints → {args.checkpoint_dir}")
     result = train(cfg)
     print(f"[train_rnnt] done. best_ctc_cer={result['best_ctc_cer']:.4f} "

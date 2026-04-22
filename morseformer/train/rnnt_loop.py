@@ -72,6 +72,12 @@ class RnntTrainConfig:
     # ``acoustic`` submodule before training starts. The RNN-T
     # prediction + joint networks still train from random init.
     pretrained_encoder: Path | None = None
+    # Path to a Phase 3 RnntModel checkpoint (e.g.
+    # checkpoints/phase3_0/best_rnnt.pt) to warm-start every module.
+    # Uses strict=False, so a deeper encoder (n_layers larger than the
+    # source) will load the matching first layers and leave the rest
+    # at random init — function-preserving scaling in depth.
+    pretrained_rnnt: Path | None = None
 
     # --- optimisation ---
     peak_lr: float = 3.0e-4
@@ -148,6 +154,28 @@ def load_pretrained_encoder_state(ckpt_path: Path) -> dict:
     if ema_state:
         # EMA only covers float-params; buffers / non-param tensors come
         # from the live-model state. Overlay EMA on top.
+        merged = dict(model_state)
+        for k, v in ema_state.items():
+            if k in merged:
+                merged[k] = v
+        return merged
+    return model_state
+
+
+def load_pretrained_rnnt_state(ckpt_path: Path) -> dict:
+    """Load a Phase 3 RnntModel checkpoint and return a full-model
+    state_dict with EMA weights overlaid where available.
+
+    This is the analogue of :func:`load_pretrained_encoder_state` but
+    for a whole RNN-T model (encoder + CTC head + prediction + joint).
+    The caller should apply the returned dict with ``strict=False`` so
+    that a deeper encoder (more ``blocks.N`` keys than the source
+    checkpoint) falls back to random init for the extra layers.
+    """
+    ckpt = torch.load(str(ckpt_path), map_location="cpu", weights_only=False)
+    model_state: dict[str, torch.Tensor] = ckpt["model"]
+    ema_state: dict[str, torch.Tensor] | None = ckpt.get("ema")
+    if ema_state:
         merged = dict(model_state)
         for k, v in ema_state.items():
             if k in merged:
@@ -318,9 +346,22 @@ def train(cfg: RnntTrainConfig) -> dict:
 
     # Bootstrap the encoder before optimizer / EMA are built so the
     # initial EMA shadow matches the bootstrapped weights.
+    bootstrap_info: dict | None = None
+    if cfg.pretrained_encoder is not None and cfg.pretrained_rnnt is not None:
+        raise ValueError(
+            "Set only one of --pretrained-encoder / --pretrained-rnnt"
+        )
     if cfg.pretrained_encoder is not None and resume_ckpt is None:
         enc_state = load_pretrained_encoder_state(cfg.pretrained_encoder)
         model.load_encoder_state_dict(enc_state)
+    elif cfg.pretrained_rnnt is not None and resume_ckpt is None:
+        full_state = load_pretrained_rnnt_state(cfg.pretrained_rnnt)
+        incompat = model.load_state_dict(full_state, strict=False)
+        bootstrap_info = {
+            "source": str(cfg.pretrained_rnnt),
+            "missing_keys": list(incompat.missing_keys),
+            "unexpected_keys": list(incompat.unexpected_keys),
+        }
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -370,6 +411,7 @@ def train(cfg: RnntTrainConfig) -> dict:
                 if cfg.pretrained_encoder is not None
                 else None
             ),
+            "pretrained_rnnt": bootstrap_info,
         })
     else:
         log({
@@ -549,4 +591,6 @@ def _config_to_jsonable(cfg: RnntTrainConfig) -> dict:
         out["resume_from"] = str(cfg.resume_from)
     if cfg.pretrained_encoder is not None:
         out["pretrained_encoder"] = str(cfg.pretrained_encoder)
+    if cfg.pretrained_rnnt is not None:
+        out["pretrained_rnnt"] = str(cfg.pretrained_rnnt)
     return out
