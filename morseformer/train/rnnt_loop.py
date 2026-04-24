@@ -458,14 +458,31 @@ def train(cfg: RnntTrainConfig) -> dict:
 
             # RNN-T loss — torchaudio requires fp32 logits and int32
             # length / target tensors.
-            rnnt = AF.rnnt_loss(
-                out["joint_logits"].float(),
-                tokens.int(),
-                enc_lengths.int(),
-                n_tokens.int(),
-                blank=BLANK_INDEX,
-                reduction="mean",
-            )
+            #
+            # Empty-target samples (n_tokens == 0, produced by the
+            # Phase 3.1 ``empty_sample_probability`` path) are masked
+            # out of the RNN-T loss: torchaudio's implementation is
+            # numerically unstable on zero-length targets and produces
+            # gradient norms in the 10¹⁵-10¹⁸ range, which even fp32
+            # grad-clip cannot rescue. CTC keeps seeing them (CTC with
+            # empty targets is well-behaved via ``zero_infinity=True``),
+            # so the model still gets a learning signal for "emit
+            # nothing on silence" — just through the CTC head, not the
+            # joint.
+            nonempty = n_tokens > 0
+            if nonempty.any():
+                idx = nonempty.nonzero(as_tuple=True)[0]
+                max_u = int(n_tokens[idx].max().item())
+                rnnt = AF.rnnt_loss(
+                    out["joint_logits"][idx, :, : max_u + 1, :].float(),
+                    tokens[idx, :max_u].int(),
+                    enc_lengths[idx].int(),
+                    n_tokens[idx].int(),
+                    blank=BLANK_INDEX,
+                    reduction="mean",
+                )
+            else:
+                rnnt = torch.zeros((), device=device)
 
             loss = cfg.ctc_weight * ctc + cfg.rnnt_weight * rnnt
 
