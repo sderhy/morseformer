@@ -127,7 +127,17 @@ def _one_sample(
     wpm: float,
     snr_db: float,
     rx_filter_bw: float | None,
+    *,
+    realistic: bool = False,
 ) -> ValidationSample:
+    """Render one validation sample.
+
+    If ``realistic=True``, the channel also carries QSB, QRN, carrier
+    drift, a per-sample tone-frequency offset (±50 Hz) and a 25 %
+    chance of QRM — matching the Phase 3.1 training distribution.
+    All channel magnitudes are drawn deterministically from ``rng``,
+    so the sample is reproducible given the caller's seed.
+    """
     # Use duration-estimate pre-filtering so that labels always match
     # the rendered audio — same policy as the training stream.
     from morseformer.data.synthetic import (
@@ -147,7 +157,12 @@ def _one_sample(
         text = fallbacks[int(rng.integers(0, len(fallbacks)))]
 
     channel_seed = int(rng.integers(0, 2**31 - 1))
-    audio = _render_one(text, wpm, cfg, snr_db, rx_filter_bw, channel_seed)
+    if realistic:
+        audio = _render_one_realistic(
+            text, wpm, cfg, snr_db, rx_filter_bw, channel_seed, rng
+        )
+    else:
+        audio = _render_one(text, wpm, cfg, snr_db, rx_filter_bw, channel_seed)
     audio = _pad_or_truncate(audio, cfg.target_samples)
     features = extract_features(audio, cfg.sample_rate, cfg.frontend)
     tokens = encode(text)
@@ -161,6 +176,73 @@ def _one_sample(
         n_frames=int(features.shape[0]),
         n_tokens=len(tokens),
     )
+
+
+def _render_one_realistic(
+    text: str,
+    wpm: float,
+    cfg: ValidationConfig,
+    snr_db: float,
+    rx_filter_bw: float | None,
+    channel_seed: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Render a sample with the full Phase 3.1 channel stack.
+
+    Mirrors the augmentations used by the Phase 3.1 training dataset
+    (freq jitter, QSB, QRN, carrier drift, and a 25 % chance of QRM)
+    but with deterministic sampling driven by the provided ``rng`` so
+    the validation set is reproducible across runs.
+    """
+    from morse_synth.channel import apply_channel
+
+    freq = cfg.freq_hz + float(rng.uniform(-50.0, 50.0))
+    qsb_rate = float(rng.uniform(0.05, 1.0))
+    qsb_depth = float(rng.uniform(0.0, 15.0))
+    qrn_rate = float(rng.uniform(0.0, 1.0))
+    drift = float(rng.uniform(0.0, 1.0))
+
+    clean = render(
+        text,
+        operator=OperatorConfig(wpm=wpm),
+        keying=cfg.keying,
+        channel=None,
+        freq=freq,
+        sample_rate=cfg.sample_rate,
+    )
+    clean = _pad_or_truncate(clean.astype(np.float32), cfg.target_samples)
+
+    if rng.random() < 0.25:
+        qrm_wpm = float(rng.uniform(cfg.wpm_bins[0], cfg.wpm_bins[-1]))
+        from morseformer.data.synthetic import (
+            _FALLBACK_SHORT_TEXTS,
+        )
+        fallbacks = _FALLBACK_SHORT_TEXTS()
+        qrm_text = fallbacks[int(rng.integers(0, len(fallbacks)))]
+        qrm_freq = cfg.freq_hz + float(rng.uniform(-300.0, 300.0))
+        qrm_rel_db = float(rng.uniform(-18.0, -8.0))
+        qrm = render(
+            qrm_text,
+            operator=OperatorConfig(wpm=qrm_wpm),
+            keying=cfg.keying,
+            channel=None,
+            freq=qrm_freq,
+            sample_rate=cfg.sample_rate,
+        )
+        qrm = _pad_or_truncate(qrm.astype(np.float32), cfg.target_samples)
+        clean = clean + qrm * (10.0 ** (qrm_rel_db / 20.0))
+
+    channel = ChannelConfig(
+        snr_db=snr_db,
+        rx_filter_bw=rx_filter_bw,
+        rx_filter_centre=cfg.freq_hz,
+        qsb_rate_hz=qsb_rate,
+        qsb_depth_db=qsb_depth,
+        qrn_rate_per_sec=qrn_rate,
+        carrier_drift_hz_per_s=drift,
+        seed=channel_seed,
+    )
+    return apply_channel(clean, cfg.sample_rate, channel)
 
 
 def build_clean_validation(
@@ -215,6 +297,43 @@ def build_snr_ladder_validation(
             for _ in range(n):
                 samples.append(
                     _one_sample(rng, cfg, wpm,
-                                snr_db=snr, rx_filter_bw=rx_filter_bw)
+                                snr_db=snr, rx_filter_bw=rx_filter_bw,
+                                realistic=False)
+                )
+    return samples
+
+
+def build_realistic_ladder_validation(
+    snrs_db: tuple[float, ...] = (20.0, 10.0, 5.0, 0.0, -5.0, -10.0),
+    *,
+    cfg: ValidationConfig | None = None,
+    rx_filter_bw: float | None = 500.0,
+    n_per_cell: int | None = None,
+) -> list[ValidationSample]:
+    """Like :func:`build_snr_ladder_validation` but the channel at each
+    SNR also carries the full Phase 3.1 augmentation stack — carrier
+    frequency offset, QSB, QRN, carrier drift, and a 25 % chance of a
+    secondary co-channel signal (QRM). This bench is the **target
+    metric** for Phase 3.1: the gain here is what the fine-tune is
+    optimising for. The AWGN-only ladder from
+    :func:`build_snr_ladder_validation` stays as the Phase 3.0
+    regression guard.
+    """
+    cfg = cfg or ValidationConfig()
+    n = n_per_cell if n_per_cell is not None else cfg.n_per_wpm
+    samples: list[ValidationSample] = []
+    for wpm_idx, wpm in enumerate(cfg.wpm_bins):
+        for snr_idx, snr in enumerate(snrs_db):
+            # A different seed offset from the AWGN ladder so the two
+            # benches use independent random draws — otherwise the
+            # realistic bench would simply be the AWGN bench with
+            # channel noise added on top of the same text.
+            rng_seed = cfg.seed + wpm_idx * 10_007 + snr_idx * 33_091 + 77_003
+            rng = np.random.default_rng(rng_seed)
+            for _ in range(n):
+                samples.append(
+                    _one_sample(rng, cfg, wpm,
+                                snr_db=snr, rx_filter_bw=rx_filter_bw,
+                                realistic=True)
                 )
     return samples

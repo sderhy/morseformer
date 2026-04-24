@@ -135,6 +135,46 @@ class DatasetConfig:
     operator_element_jitter_range: tuple[float, float] = (0.0, 0.0)
     operator_gap_jitter_range: tuple[float, float] = (0.0, 0.0)
 
+    # --- Phase 3.1 extensions: richer HF channel, all disabled by default ---
+    #
+    # These knobs turn on capabilities that already exist in
+    # :class:`morse_synth.channel.ChannelConfig` (QSB, QRN, carrier drift)
+    # plus two genuinely new ones (per-sample carrier-frequency jitter
+    # and QRM co-channel interference). The Phase 3.1 preset wires them
+    # into realistic defaults; the plain ``DatasetConfig`` inherits the
+    # Phase 2.0 silence so older tests keep producing identical audio.
+
+    # Per-sample tone-frequency jitter (Hz). Sample ``freq = freq_hz + U(lo, hi)``
+    # for every rendered utterance. Models the user's imperfect zero-beat
+    # on the rig. (lo == hi) disables jitter — both zero = Phase 2.1 behaviour.
+    freq_offset_range_hz: tuple[float, float] = (0.0, 0.0)
+
+    # Per-sample QSB (slow amplitude fading) rate and depth, sampled
+    # uniformly from the ranges. Depth in dB; 20 dB ≈ fades down to 1/10.
+    qsb_rate_range_hz: tuple[float, float] = (0.0, 0.0)
+    qsb_depth_range_db: tuple[float, float] = (0.0, 0.0)
+
+    # Per-sample QRN (atmospheric impulse) Poisson rate. Peak amplitude
+    # and decay are fixed to the ChannelConfig defaults.
+    qrn_rate_range_per_sec: tuple[float, float] = (0.0, 0.0)
+
+    # Per-sample carrier-drift stddev, in Hz per second. Each utterance
+    # gets an independent random walk.
+    carrier_drift_sigma_range_hz_per_s: tuple[float, float] = (0.0, 0.0)
+
+    # Probability of emitting a *pure-noise* sample (AWGN only, no CW),
+    # labelled with the empty string. Kills the "hallucinate on silence"
+    # failure mode observed on real-air audio.
+    empty_sample_probability: float = 0.0
+
+    # QRM: co-channel interference. With probability ``qrm_probability``,
+    # render a second independent CW utterance at ``freq_hz + U(offset)``
+    # and mix it into the primary at ``U(qrm_rel_db_range)`` relative power.
+    # 0.0 probability disables the branch entirely.
+    qrm_probability: float = 0.0
+    qrm_offset_range_hz: tuple[float, float] = (-300.0, 300.0)
+    qrm_rel_db_range: tuple[float, float] = (-20.0, -8.0)
+
     seed: int = 0
     max_text_retries: int = 5
 
@@ -185,6 +225,47 @@ class DatasetConfig:
             rx_filter_bw=500.0,
             operator_element_jitter_range=(0.0, 0.12),
             operator_gap_jitter_range=(0.0, 0.20),
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_3_1(cls, **overrides) -> "DatasetConfig":
+        """Phase 3.1 realistic-HF curriculum.
+
+        Turns on every channel impairment at realistic magnitudes:
+
+            * Carrier-frequency jitter ±50 Hz (user's imperfect tune)
+            * QSB (0.05 – 1 Hz fading, 0 – 15 dB depth)
+            * QRN (0 – 1 impulse / sec at −6 dB peak)
+            * Carrier drift (0 – 1 Hz / s)
+            * Wider operator jitter (element ≤ 0.08, gap ≤ 0.15) so the
+              model sees the benchmark operator profile
+            * 5 % empty-audio samples (pure AWGN, empty label) to kill
+              the silence-hallucination failure mode
+            * 25 % QRM (second CW signal at ±50 – 300 Hz offset,
+              −18 to −8 dB relative)
+
+        The SNR range is held at (0, 30) dB — same as Phase 2.1 — to
+        preserve a direct comparison with the Phase 3.0 benchmark. All
+        gains in this curriculum come from channel realism, not from
+        moving the SNR operating point.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.08),
+            operator_gap_jitter_range=(0.0, 0.15),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.05,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
         )
         base.update(overrides)
         return cls(**base)
@@ -242,22 +323,54 @@ class SyntheticCWDataset(IterableDataset):
             seed=op_seed,
         )
 
+    @staticmethod
+    def _uniform_or_zero(
+        rng: np.random.Generator, rng_range: tuple[float, float]
+    ) -> float:
+        lo, hi = rng_range
+        return float(rng.uniform(lo, hi)) if hi > lo else 0.0
+
     def _sample_channel(
-        self, rng: np.random.Generator
+        self, rng: np.random.Generator, snr_override: float | None = None,
     ) -> ChannelConfig | None:
+        """Sample a :class:`ChannelConfig` for one utterance.
+
+        Phase 2.1 knobs (AWGN SNR + RX filter) are joined by the
+        Phase 3.1 extensions (QSB / QRN / carrier drift) when their
+        ranges are non-trivial. Per-sample randomisation keeps the
+        training distribution wide without complicating the caller.
+
+        ``snr_override`` forces a specific SNR (used by empty-sample
+        rendering so the AWGN level is set explicitly).
+        """
         cfg = self.cfg
-        if cfg.channel_probability <= 0.0:
+        if cfg.channel_probability <= 0.0 and snr_override is None:
             return None
-        if cfg.channel_probability < 1.0 and rng.random() >= cfg.channel_probability:
+        if (
+            snr_override is None
+            and cfg.channel_probability < 1.0
+            and rng.random() >= cfg.channel_probability
+        ):
             return None
-        lo, hi = cfg.snr_db_range
-        snr_db = float(rng.uniform(lo, hi)) if hi > lo else float(lo)
-        ch_seed = int(rng.integers(0, 2**31 - 1))
+
+        if snr_override is not None:
+            snr_db = float(snr_override)
+        else:
+            snr_db = self._uniform_or_zero(rng, cfg.snr_db_range)
+
         return ChannelConfig(
             snr_db=snr_db,
             rx_filter_bw=cfg.rx_filter_bw,
             rx_filter_centre=cfg.freq_hz,
-            seed=ch_seed,
+            qsb_rate_hz=self._uniform_or_zero(rng, cfg.qsb_rate_range_hz),
+            qsb_depth_db=self._uniform_or_zero(rng, cfg.qsb_depth_range_db),
+            qrn_rate_per_sec=self._uniform_or_zero(
+                rng, cfg.qrn_rate_range_per_sec
+            ),
+            carrier_drift_hz_per_s=self._uniform_or_zero(
+                rng, cfg.carrier_drift_sigma_range_hz_per_s
+            ),
+            seed=int(rng.integers(0, 2**31 - 1)),
         )
 
     def _sample_fitting_text(self, rng: np.random.Generator, wpm: float) -> str:
@@ -281,24 +394,121 @@ class SyntheticCWDataset(IterableDataset):
         short = _FALLBACK_SHORT_TEXTS()
         return short[int(rng.integers(0, len(short)))]
 
+    def _sample_carrier_freq(self, rng: np.random.Generator) -> float:
+        """Return the per-sample tone frequency, jittered around
+        ``cfg.freq_hz`` by ``cfg.freq_offset_range_hz``. Models the
+        user's imperfect zero-beat on the rig."""
+        return self.cfg.freq_hz + self._uniform_or_zero(
+            rng, self.cfg.freq_offset_range_hz
+        )
+
+    def _maybe_qrm_audio(
+        self,
+        rng: np.random.Generator,
+        target_samples: int,
+    ) -> np.ndarray | None:
+        """Optionally render a secondary CW signal at an offset
+        frequency to simulate adjacent-channel interference. Returns
+        ``None`` if QRM is not drawn this iteration."""
+        cfg = self.cfg
+        if cfg.qrm_probability <= 0.0 or rng.random() >= cfg.qrm_probability:
+            return None
+        qrm_wpm = float(rng.uniform(*cfg.wpm_range))
+        qrm_text = self._sample_fitting_text(rng, qrm_wpm)
+        qrm_op = self._sample_operator(rng, qrm_wpm)
+        qrm_offset = self._uniform_or_zero(rng, cfg.qrm_offset_range_hz)
+        qrm_rel_db = self._uniform_or_zero(rng, cfg.qrm_rel_db_range)
+        qrm_audio = render(
+            qrm_text,
+            operator=qrm_op,
+            keying=cfg.keying,
+            channel=None,     # QRM is mixed *before* the receiver's channel
+            freq=cfg.freq_hz + qrm_offset,
+            sample_rate=cfg.sample_rate,
+        )
+        qrm_audio = _pad_or_truncate(qrm_audio, target_samples)
+        return qrm_audio.astype(np.float32) * (10.0 ** (qrm_rel_db / 20.0))
+
+    def _empty_sample_features(
+        self, rng: np.random.Generator
+    ) -> tuple[np.ndarray, list[int]]:
+        """Render a pure-noise clip (no CW) paired with an empty label.
+
+        SNR is drawn from the usual range but the signal RMS reference
+        is a fake impulse: we fall back to a fixed noise RMS so the
+        clip has the same scale as regular samples.
+        """
+        cfg = self.cfg
+        # Use a fixed noise RMS matched to a mid-SNR real sample so the
+        # loudness range is comparable to the rest of the distribution.
+        target_samples = cfg.target_samples
+        noise_rms = 0.1
+        audio = rng.normal(0.0, noise_rms, size=target_samples).astype(np.float32)
+        # Still apply the receiver filter if configured so the empty
+        # sample looks spectrally like any other sample after the RX
+        # stage. Skip QSB / QRN — the model needs a clean "silence"
+        # anchor to learn "emit nothing".
+        if cfg.rx_filter_bw is not None and cfg.rx_filter_bw > 0:
+            from morse_synth.channel import _apply_rx_filter
+            audio = _apply_rx_filter(
+                audio, cfg.sample_rate, cfg.rx_filter_bw, cfg.freq_hz
+            )
+        return audio, []
+
     def _generate_one(self, rng: np.random.Generator) -> dict:
         cfg = self.cfg
-        wpm = float(rng.uniform(*cfg.wpm_range))
 
+        # Empty-sample branch (Phase 3.1): short-circuit rendering and
+        # emit pure noise labelled with an empty token sequence so the
+        # model learns that "no CW energy → no emission".
+        if (
+            cfg.empty_sample_probability > 0.0
+            and rng.random() < cfg.empty_sample_probability
+        ):
+            audio, tokens_list = self._empty_sample_features(rng)
+            features = extract_features(audio, cfg.sample_rate, cfg.frontend)
+            return {
+                "features": torch.from_numpy(features),
+                "tokens": torch.tensor(tokens_list, dtype=torch.int64),
+                "n_frames": int(features.shape[0]),
+                "n_tokens": 0,
+            }
+
+        wpm = float(rng.uniform(*cfg.wpm_range))
         text = self._sample_fitting_text(rng, wpm)
         operator = self._sample_operator(rng, wpm)
-        channel = self._sample_channel(rng)
-        audio = render(
+        freq = self._sample_carrier_freq(rng)
+
+        # Optional QRM: render the second signal *before* the primary's
+        # channel so both see the same receiver filter and AWGN.
+        qrm_audio = self._maybe_qrm_audio(rng, cfg.target_samples)
+
+        # Primary signal is rendered clean here so we can mix QRM in
+        # before the channel stage. The channel (AWGN + QSB + QRN +
+        # carrier drift + RX filter) is then applied to the combined
+        # audio in one pass — this matches the physical receiver chain.
+        clean_audio = render(
             text,
             operator=operator,
             keying=cfg.keying,
-            channel=channel,
-            freq=cfg.freq_hz,
+            channel=None,
+            freq=freq,
             sample_rate=cfg.sample_rate,
         )
+        clean_audio = _pad_or_truncate(clean_audio.astype(np.float32),
+                                       cfg.target_samples)
+        if qrm_audio is not None:
+            clean_audio = clean_audio + qrm_audio
+
+        channel = self._sample_channel(rng)
+        if channel is not None:
+            from morse_synth.channel import apply_channel
+            audio = apply_channel(clean_audio, cfg.sample_rate, channel)
+        else:
+            audio = clean_audio
 
         audio = _pad_or_truncate(audio, cfg.target_samples)
-        features = extract_features(audio, cfg.sample_rate, cfg.frontend)  # [T, 1]
+        features = extract_features(audio, cfg.sample_rate, cfg.frontend)
         tokens = encode(text)
 
         return {
