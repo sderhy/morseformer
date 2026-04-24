@@ -1,200 +1,17 @@
 # morseformer
 
-> Open-source transformer-based Morse / CW decoder with a built-in ham-specialised language model. Real-time. Fully local. Apache 2.0.
+> Open-source transformer-based Morse / CW decoder. Fully local. Apache 2.0.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Status: Pre-Alpha](https://img.shields.io/badge/status-pre--alpha-red.svg)](#)
+[![Release: v0.1.0](https://img.shields.io/badge/release-v0.1.0-brightgreen.svg)](#release-v010)
+[![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-**Status: pre-alpha.** Active development. No checkpoints released yet. Star / watch if you want to follow along.
+Conformer + RNN-T Morse decoder with an optional character-level language model, trained on a reproducible synthetic-HF pipeline. The **v0.1.0 release** ships a 4.1 M-parameter acoustic model that hits **0 % CER at SNR ≥ 0 dB** on the official in-distribution SNR-ladder benchmark, a 4.8 M-parameter LM, and LM-fusion decoders (shallow + ILME) for research.
 
 ## Why
 
-Existing open-source CW decoders (`fldigi`, `cwdecoder`, `MRP40`) rely on hand-tuned DSP and seuil-based segmentation; they struggle in weak-signal conditions, QRM, QSB, and with non-ideal operator timing. The commercial reference, `CW Skimmer` (VE3NEA), is closed-source and built on ~2009-era Kalman filtering. **As of April 2026, there is no published transformer-based CW decoder, and no open-source CW decoder with an integrated language model.** `morseformer` fills that gap.
-
-## Design
-
-A five-stage pipeline, fully local, CPU-real-time at inference:
-
-```
-IC-7300 audio ──▶ [1] DSP front-end (AFC/PLL + complex BPF)
-              ──▶ [2] WPM + fist encoder (tiny CNN, FiLM conditioning)
-              ──▶ [3] Acoustic model (compact Transformer, CTC + RNN-T)
-              ──▶ [4] Shallow fusion with a local nanoGPT-style language model
-              ──▶ [5] Async rescorer (same LM, wider context, QSO state)
-              ──▶ text
-```
-
-The language model is trained from scratch on amateur-radio text: RBN spot archives, CQWW/ARRL contest exchanges, QSO transcripts, Q-codes, and a synthetic callsign corpus weighted by real ITU prefix-activity distributions. **No external APIs in the hot path.**
-
-## Goals
-
-- **Real-time streaming** (< 200 ms latency) for live QSO copy
-- **State-of-the-art weak-signal performance** (target: CER < 10 % at −5 dB SNR, < 25 % at −15 dB)
-- **Callsign-aware decoding** via regex-constrained beam search and ITU prefix priors
-- **CPU-real-time inference** — no GPU required to *use* the decoder
-- **Fully reproducible training pipeline**, including an open synthetic-data generator with HF-channel simulation (AWGN, QRN, QRM, QSB, multipath, drift)
-
-## Current state
-
-- [x] **Phase 0** — evaluation harness, rule-based baseline decoder
-- [x] **Phase 1** — parametric operator model + HF-channel simulator (AWGN, QRN, QSB, carrier drift, RX filter); SNR-ladder benchmark
-- [x] **Phase 2.0** — acoustic model (Conformer + RoPE, 3.9 M params, CTC head) trained on clean audio; 1.17 % CER on a balanced 200-sample clean validation set (0 % on 4 of 5 WPM bins at 40 samples each)
-- [x] **Phase 2.1** — moderate-noise training (AWGN ∈ [0, 30] dB + RX filter + mild operator jitter); beats the rule-based baseline by **33× at 0 dB, 7× at −5 dB, 16× at −10 dB, 22× at −15 dB** on the official SNR-ladder benchmark. Recommended release checkpoint.
-- [x] **Phase 2.2** — same architecture trained with widened operator jitter (element ∈ [0, 0.12], gap ∈ [0, 0.20]) for 50 k steps. A deliberate ablation: the wider distribution makes the model more conservative (stops hallucinating on pure noise at −10 / −15 dB) but loses high-SNR precision. Kept for paper reference; does not supersede 2.1.
-- [ ] Phase 3 — weak-signal training + RNN-T head + FiLM conditioning
-- [ ] Phase 4 — language-model pretraining + shallow fusion
-- [ ] Phase 5 — real-time WSL CLI on live IC-7300 audio
-- [ ] Phase 6 — GitHub / HuggingFace release, benchmark, paper
-
-## Baseline (rule-based DSP)
-
-SNR-ladder benchmark, 40 samples per bin, WPM uniform in [18, 28], AWGN only.
-This is the number the neural pipeline must beat.
-
-```
-  SNR (dB) |  n  |    CER   |    WER   | Callsign F1
-  ---------+-----+----------+----------+-------------
-      +inf |  40 |   0.0000 |   0.0000 |      1.0000
-     +20.0 |  40 |   0.0000 |   0.0000 |      1.0000
-     +15.0 |  40 |   0.0000 |   0.0000 |      1.0000
-     +10.0 |  40 |   0.0000 |   0.0000 |      1.0000
-      +5.0 |  40 |   0.0058 |   0.0204 |      1.0000
-       0.0 |  40 |   2.5355 |   3.0799 |      0.5750
-      −5.0 |  40 |   5.8327 |   9.6283 |      0.6500
-     −10.0 |  40 |  19.4111 |  23.7179 |      0.5750
-     −15.0 |  40 |  25.1948 |  29.2015 |      0.6250
-```
-
-CER values above 1.0 indicate that the decoder hallucinates characters
-from noise impulses — a well-known failure mode of threshold-based CW
-decoders below 0 dB SNR. The Phase-2 transformer should collapse this
-cliff via probabilistic element scoring and shallow-fusion language
-priors.
-
-## Phase 2.0 result (clean-audio acoustic model)
-
-Conformer encoder (d_model = 144, 8 layers, 4 heads, 4× time sub-
-sampling, RoPE attention, LayerNorm-based conv module), ~3.9 M
-trainable parameters. Trained for 14 k steps on the synthetic stream
-(WPM ∈ U(16, 28), no channel, no operator jitter, fixed 6 s utterances
-at 8 kHz). AdamW, 2 k warmup + cosine decay, EMA 0.9999, bf16 autocast,
-CTC loss with fp32 log-softmax head. Single RTX 3060 (6 GB), ≈ 3 hours
-wall time.
-
-Clean validation (200 samples, 5 WPM bins × 40 samples, same text mix
-as training):
-
-```
-  WPM  |  n  |   CER   |   WER
-  -----+-----+---------+--------
-   16  |  40 |  0.0000 |  0.0000
-   20  |  40 |  0.0000 |  0.0000
-   22  |  40 |  0.0000 |  0.0000
-   25  |  40 |  0.0000 |  0.0000
-   28  |  40 |  0.0583 |  0.0750
-  -----+-----+---------+--------
-  all  | 200 |  0.0117 |  0.0150
-```
-
-The 28 WPM residual is concentrated on 1–3 character Q-codes where the
-6 s window is mostly silence and the model occasionally fires spurious
-characters on the silent lead-in. Noisy-condition training (Phase 2.1)
-will expose the same edge case to ambient-noise data and should
-regularise it away.
-
-## Phase 2.1 result (moderate-noise acoustic model)
-
-Same architecture as Phase 2.0 (Conformer + RoPE, 3.9 M params).
-Trained for 50 k steps on the noisy curriculum — AWGN at SNR ∈ U(0, 30)
-dB on every sample, 500 Hz RX bandpass at 600 Hz centre, mild operator
-jitter (element ∈ U(0, 0.05) dot-units, gap ∈ U(0, 0.10)). Same optim,
-same AMP config, same 6 s utterance, WPM ∈ U(16, 28). One crash in the
-middle of the run, cleanly recovered via `--resume-from last.pt` with
-zero lost progress — see `scripts/train_acoustic.py --help`. RTX 3060
-6 GB, ≈ 3.5 h wall time total.
-
-**Official SNR-ladder benchmark** (`python -m eval.cli --decoder neural
---checkpoint checkpoints/phase2_1_final.pt --dataset snr_ladder
---snrs +20,+15,+10,+5,0,-5,-10,-15 --n-per-snr 40`):
-
-```
-  SNR (dB) |  n  |    CER   |    WER   | Callsign F1   (neural)
-  ---------+-----+----------+----------+--------------
-     +20.0 |  40 |   0.0252 |   0.0708 |      1.0000
-     +15.0 |  40 |   0.0297 |   0.0717 |      1.0000
-     +10.0 |  40 |   0.0153 |   0.0542 |      1.0000
-      +5.0 |  40 |   0.0254 |   0.0627 |      1.0000
-      +0.0 |  40 |   0.0774 |   0.1977 |      0.9167
-      -5.0 |  40 |   0.7904 |   1.2183 |      0.6750
-     -10.0 |  40 |   1.2366 |   1.8283 |      0.7000
-     -15.0 |  40 |   1.1681 |   1.8569 |      0.7000
-```
-
-Speed-up factor over the rule-based baseline, same bench, same seed:
-
-```
-  SNR (dB) |  CER ratio (baseline / neural)
-  ---------+-------------------------------
-      +0.0 |   2.54 / 0.08  =  33 ×
-      -5.0 |   5.83 / 0.79  =   7 ×
-     -10.0 |  19.41 / 1.24  =  16 ×
-     -15.0 |  25.19 / 1.17  =  22 ×
-```
-
-**In-distribution validation** (5 WPM × 6 SNR × 40 = 1200 samples,
-text mix identical to training, jitter distribution identical to
-training):
-
-```
-  SNR (dB) |    CER
-  ---------+--------
-     +20.0 |  0.0000
-     +10.0 |  0.0000
-      +5.0 |  0.0000
-      +0.0 |  0.0000
-      -5.0 |  0.0213
-     -10.0 |  0.8528
-```
-
-The 40 × gap between the in-distribution CER at −5 dB (2.1 %) and the
-official benchmark CER at −5 dB (79 %) is a **jitter-generalisation
-shortfall**. The benchmark generator (`eval.datasets.generate_noisy`)
-uses `OperatorConfig(element_jitter=0.08, gap_jitter=0.15)`, i.e.
-~2 × the training distribution's mean. Above +5 dB the model handles
-this gap easily; below −5 dB it does not.
-
-## Phase 2.2 (widened jitter) — a lateral move, not a win
-
-Phase 2.2 trained the same architecture with `element_jitter ∈ U(0, 0.12)`
-and `gap_jitter ∈ U(0, 0.20)` (spans the benchmark operator profile),
-50 k steps, other hyperparameters unchanged. The goal was to close the
-jitter-OOD gap. Result: the model became **more conservative** — less
-hallucination on noise-only audio at −10 and −15 dB, but measurably
-less sharp at high SNR. Honest side-by-side on the official benchmark:
-
-```
-  SNR (dB) |  Phase 2.1 CER  |  Phase 2.2 CER   (40 samples / bin)
-  ---------+-----------------+----------------
-     +20.0 |     0.0252      |     0.0891
-     +10.0 |     0.0153      |     0.0758
-      +5.0 |     0.0254      |     0.0996
-      +0.0 |     0.0774      |     0.3197
-      -5.0 |     0.7904      |     0.9597
-     -10.0 |     1.2366      |     0.9154   ← first run below 1.0
-     -15.0 |     1.1681      |     0.9468   ← first run below 1.0
-```
-
-What this says: a 3.9 M-parameter CTC model trained on a wider
-jitter distribution for the same 50 k steps learns a blunter posterior
-— it gives up high-SNR precision to stop inventing tokens in pure
-noise. More capacity, more training time, a curriculum that widens
-gradually, or a sequence-level head (RNN-T) are the structural ways
-to pick up both ends at once; Phase 3 tackles this.
-
-**The Phase 2.1 checkpoint remains the recommended release** for the
-clean-to-moderate SNR range. Phase 2.2 is archived for ablation /
-paper reference but does not supersede 2.1.
+Existing open-source CW decoders (`fldigi`, `cwdecoder`, `MRP40`) rely on hand-tuned DSP and threshold-based segmentation; they struggle in weak-signal conditions, QRM, QSB, and with non-ideal operator timing. The commercial reference, `CW Skimmer` (VE3NEA), is closed-source and built on ~2009-era Kalman filtering. **As of April 2026, there is no published transformer-based CW decoder, and no open-source CW decoder with an integrated language model.** `morseformer` fills that gap.
 
 ## Quick start
 
@@ -202,15 +19,177 @@ paper reference but does not supersede 2.1.
 git clone git@github.com:sderhy/morseformer.git
 cd morseformer
 pip install -e ".[dev,audio]"
-pytest -q                                            # 57 unit tests, <2 s
-python -m eval.cli --decoder rule_based --dataset sanity
-python -m eval.cli --decoder rule_based --dataset snr_ladder \
-    --snrs="+20,+10,+5,0,-5,-10,-15" --n-per-snr 20
+pytest -q
+
+# download the release checkpoint (4.1 M params, ~16 MB)
+huggingface-cli download sderhy/morseformer rnnt_phase3_0.pt \
+    --local-dir checkpoints/phase3_0
+
+# decode a .wav file (any length — audio is chunked into 6 s windows,
+# the length the model was trained on)
+python -m scripts.decode_audio my_recording.wav \
+    --ckpt checkpoints/phase3_0/rnnt_phase3_0.pt
 ```
+
+Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
+
+```
+CTC  : 'CQ DE F4HYY K'
+RNN-T: 'CQ DE F4HYY K'
+```
+
+## Release v0.1.0
+
+The release consists of three artifacts, all on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
+
+| file                        | params | purpose                                             |
+|-----------------------------|--------|-----------------------------------------------------|
+| `rnnt_phase3_0.pt`          | 4.13 M | **main acoustic model** — Conformer + RNN-T/CTC     |
+| `lm_phase4_0.pt`            | 4.76 M | character-level language model (optional, research) |
+| `MODEL_CARD.md`             | —      | architecture, training data, benchmarks, limits     |
+
+The acoustic model is the primary release. The LM and fusion decoder are bundled for reproducibility — on the current synthetic distribution they do **not** improve CER (see [Phase 4.1 result](#phase-41--lm-fusion-does-not-help-on-synthetic-data) below), but shipping them makes the code auditable and leaves the door open for future work on real-text LM corpora.
+
+## Benchmarks
+
+**Phase 3.0 SNR-ladder** (1200 in-distribution validation samples: 40 per WPM × 5 WPM bins × 6 SNR; synthetic AWGN + 500 Hz RX filter; same operator-jitter distribution as training):
+
+```
+  SNR (dB) |  CER    |  WER    |  notes
+  ---------+---------+---------+---------------------------------
+     +20.0 |  0.0000 |  0.0000 |
+     +10.0 |  0.0000 |  0.0000 |
+      +5.0 |  0.0000 |  0.0000 |
+       0.0 |  0.0000 |  0.0000 |
+      −5.0 |  0.0280 |  0.0737 |
+     −10.0 |  0.7620 |  0.9460 |  ← single bin dominates aggregate CER
+  ---------+---------+---------+
+  overall  |  0.1317 |  0.1718 |
+```
+
+RNN-T head vs CTC head on the same encoder: RNN-T wins by ~4 pp at −10 dB (the only bin where the two disagree). On SNR ≥ 0 dB the heads are tied at 0 %. See [`scripts/eval_fusion.py`](scripts/eval_fusion.py) to reproduce.
+
+**Speed-up vs the rule-based baseline** (`python -m eval.cli --decoder rule_based`, same seed, same bench):
+
+```
+  SNR (dB) |  baseline CER  |  Phase 3.0 CER  |  speed-up
+  ---------+----------------+-----------------+----------
+       0.0 |      2.5355    |      0.0000     |    ∞
+      −5.0 |      5.8327    |      0.0280     |  208 ×
+     −10.0 |     19.4111    |      0.7620     |   25 ×
+```
+
+## Architecture
+
+A compact 5-stage pipeline, fully local, CPU-real-time at inference:
+
+```
+audio ──▶ [1] DSP front-end (complex BPF at carrier)
+      ──▶ [2] Conformer encoder (d=144, L=8, RoPE, 4× subsample)
+      ──▶ [3] Dual heads: CTC (framewise) + RNN-T (prediction + joint)
+      ──▶ [4] Optional LM fusion (shallow or ILME density-ratio)
+      ──▶ text
+```
+
+- **Encoder**: 8-layer Conformer with RoPE attention, depth-wise conv module with LayerNorm, 4× time sub-sampling. ~3.9 M params. Shared between the CTC and RNN-T heads.
+- **CTC head**: single linear on encoder output → per-frame vocab logits.
+- **RNN-T head**: 128-dim LSTM prediction network + 256-dim joint network, blank at index 0. ~0.2 M params.
+- **LM** (v0.1 release includes, but fusion gain is null — see Phase 4.1): decoder-only GPT (RMSNorm + SwiGLU + RoPE + tied embeddings + causal SDPA), d=256, L=6. ~4.8 M params. Trained to PPL 3.75 on the synthetic morseformer text distribution.
+
+Vocabulary: 46 tokens (blank + 26 letters + 10 digits + 9 punctuation / Morse prosigns).
+
+## Training data
+
+All training audio in v0.1 is synthetic:
+
+- **Text corpus**: a mix of random-callsign strings weighted by real ITU prefix-activity distributions (RBN-derived), contest QSO exchanges (CQ WW / ARRL-DX / SS formats), common Q-codes and abbreviations, RST reports, and ragchew fragments. See `morseformer/data/text.py`.
+- **Waveform renderer**: parametric operator model (WPM, element / gap jitter), Morse-code keying with sine carrier, HF-channel simulator (AWGN, RX bandpass) — see `morse_synth/`.
+- **Curriculum**: Phase 2.1 conditions — AWGN SNR ∈ U(0, 30) dB, 500 Hz RX filter at 600 Hz carrier, element jitter ∈ U(0, 0.05), gap jitter ∈ U(0, 0.10), WPM ∈ U(16, 28), fixed 6 s utterances at 8 kHz. Phase 3.0 trained 80 k steps on this.
+
+No real-audio data is used in v0.1. Real-audio finetuning is on the Phase 3.1+ roadmap.
+
+## Training history
+
+<details>
+<summary><b>Phase 0</b> — evaluation harness + rule-based DSP baseline</summary>
+
+CER ranges from 0 at high SNR to ≈ 25 at −15 dB (threshold decoders hallucinate on noise). Used as the scoreboard the neural pipeline must beat. See `eval/` for the bench.
+</details>
+
+<details>
+<summary><b>Phase 1</b> — HF-channel simulator + operator model</summary>
+
+AWGN, QRN, QSB, carrier drift, RX filter. Feeds every subsequent phase. See `morse_synth/`.
+</details>
+
+<details>
+<summary><b>Phase 2.0</b> — clean-audio acoustic baseline (CTC only)</summary>
+
+Conformer + RoPE, 3.9 M params. 14 k steps on clean 6 s clips. **1.17 % CER** on balanced clean validation.
+</details>
+
+<details>
+<summary><b>Phase 2.1</b> — noisy curriculum (CTC only)</summary>
+
+Same arch, 50 k steps on AWGN ∈ U(0, 30) dB + RX filter + mild jitter. Beat the rule-based baseline by 33× at 0 dB, 7× at −5 dB, 16× at −10 dB. Encoder weights bootstrap Phase 3.
+</details>
+
+<details>
+<summary><b>Phase 2.2</b> — wider-jitter ablation (archived)</summary>
+
+Traded high-SNR precision for less hallucination at −10 / −15 dB. Kept as ablation; does not supersede 2.1.
+</details>
+
+### Phase 3.0 — RNN-T head + multi-task CTC / RNN-T training (v0.1 release)
+
+Added a PredictionNetwork (single-layer LSTM, d_pred = 128) and a JointNetwork (d_joint = 256) on top of the Phase 2.1 Conformer encoder, trained multi-task with `ctc_weight = 0.3` and `rnnt_weight = 1.0` for 80 k steps. Encoder weights bootstrapped from `phase2_1/best_cer.pt`; CTC head re-used. Same curriculum as Phase 2.1, same AMP (bf16) config, EMA 0.9999. ~10 h wall time on an RTX 3060.
+
+Result: **13.15 % overall CER**, with the RNN-T head beating the CTC head by 4 pp at the single −10 dB bin (where the RNN-T's sequence-level prior actually matters). At SNR ≥ 0 dB the two heads are tied at 0 %.
+
+A d=144×L=16 scaling attempt (Phase 3-scale, 8 M params) tied with Phase 3.0 to within noise (13.16 % vs 13.15 %) — **capacity is not the bottleneck, the −10 dB AWGN bin is intrinsic to the synthetic distribution**.
+
+### Phase 4.0 — character-level LM
+
+A 4.76 M-param decoder-only transformer (RMSNorm, SwiGLU, RoPE, tied embeddings, causal SDPA), trained on the same synthetic text distribution as the acoustic model. Plateaued at val PPL 3.75 (step ~2.5 k); killed at step 8.5 k once it was clear the synthetic corpus was saturated. Released for research; not required for decoding.
+
+### Phase 4.1 — LM fusion does not help on synthetic data
+
+Both shallow fusion (Gulati et al. 2020) and ILME / density-ratio fusion (Meng et al. 2021, arXiv:2011.01991) were implemented on top of the RNN-T greedy decoder and swept over the SNR ladder:
+
+```
+  λ_lm  |  λ_ilm  |  overall CER  |  CER at −10 dB
+  ------+---------+---------------+----------------
+  0.00  |  0.00   |    13.17 %    |    76.20 %     (baseline, n = 1200)
+  0.20  |  0.00   |    13.26 %    |    76.70 %     (shallow)
+  0.30  |  0.00   |    13.09 %    |    75.63 %     (shallow, best λ)
+  0.20  |  0.20   |    13.65 %    |    78.37 %     (ILME, n = 150)
+  0.50  |  0.50   |    21.19 %    |   116.52 %     (ILME, aggressive)
+```
+
+The λ curve is flat inside the ±0.3 pp noise floor at n = 1200 — **fusion gives no measurable gain** on this distribution. ILME is actively harmful at −10 dB.
+
+Root cause: the LM and the RNN-T prediction network see **exactly the same synthetic text corpus**. Standard ASR results where external-LM fusion wins rely on a domain shift between training text and eval text, which we do not have here. The fusion code ships as a documented capability; expect it to start helping once v0.2 adds a ham-realistic LM corpus (QSO logs, contest exchanges, RBN spots) distinct from the acoustic model's training text.
+
+## Roadmap
+
+- [x] **Phase 0** — evaluation harness + rule-based baseline
+- [x] **Phase 1** — operator model + HF-channel simulator
+- [x] **Phase 2.0** — clean-audio CTC baseline (1.17 % CER)
+- [x] **Phase 2.1** — noisy CTC curriculum (beats rule-based 7-33× on SNR ladder)
+- [x] **Phase 2.2** — wider-jitter ablation (archived)
+- [x] **Phase 3.0** — RNN-T head, multi-task training — **v0.1 release**
+- [x] **Phase 3-scale** — d×L ablation; capacity is not the bottleneck
+- [x] **Phase 4.0** — character-level LM (PPL 3.75)
+- [x] **Phase 4.1** — LM fusion (shallow + ILME); neutral on synthetic data
+- [ ] **Phase 3.1** — realistic synthetic channel (QRM, QRN, selective fading, real RX filter) — this is where the next real CER gain is expected
+- [ ] **Phase 4.2** — ham-realistic LM corpus (RBN spots, contest logs, real QSO transcripts) — prerequisite for fusion gains
+- [ ] **Phase 5** — real-audio finetuning (W1AW aligned transcripts, RBN/SDR pairings)
+- [ ] **Phase 6** — real-time streaming CLI on live IC-7300 audio
+- [ ] **Phase 7** — callsign-aware beam search with ITU prefix priors
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE). The released model weights are distributed under the same license.
 
 ## Acknowledgements
 

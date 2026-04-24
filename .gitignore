@@ -55,3 +55,7 @@ Thumbs.db
 api_key.txt
 apikey
 checkpoints/
+
+# Release staging (produced by scripts/prepare_release.py; uploaded via
+# scripts/push_to_hub.py — never checked into git)
+release/
