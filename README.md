@@ -21,8 +21,9 @@ cd morseformer
 pip install -e ".[dev,audio]"
 pytest -q
 
-# download the release checkpoint (4.1 M params, ~16 MB)
-huggingface-cli download sderhy/morseformer rnnt_phase3_0.pt \
+# download the release checkpoint (4.1 M params, ~33 MB)
+pip install huggingface_hub
+hf download sderhy/morseformer rnnt_phase3_0.pt \
     --local-dir checkpoints/phase3_0
 
 # decode a .wav file (any length — audio is chunked into 6 s windows,

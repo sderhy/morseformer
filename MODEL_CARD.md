@@ -84,7 +84,8 @@ cd morseformer
 pip install -e ".[audio]"
 
 # Download the checkpoint
-huggingface-cli download sderhy/morseformer rnnt_phase3_0.pt \
+pip install huggingface_hub
+hf download sderhy/morseformer rnnt_phase3_0.pt \
     --local-dir checkpoints/phase3_0
 
 # Decode a .wav file (any length — chunked into 6 s windows automatically)
