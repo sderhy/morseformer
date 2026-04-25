@@ -268,6 +268,31 @@ class RnntModel(nn.Module):
 
         Returns one list of non-blank token indices per batch item.
         """
+        aligned = self.greedy_rnnt_decode_aligned(
+            features, lengths, max_emit_per_frame=max_emit_per_frame
+        )
+        return [[tok for tok, _ in h] for h in aligned]
+
+    @torch.no_grad()
+    def greedy_rnnt_decode_aligned(
+        self,
+        features: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+        max_emit_per_frame: int = 5,
+    ) -> list[list[tuple[int, int]]]:
+        """Greedy RNN-T decoding that also returns the encoder frame
+        index at which each non-blank token was emitted.
+
+        Each emission is tagged with the encoder frame it was emitted on.
+        Multiple tokens emitted at the same frame share that frame index.
+        Frame indices are monotonically non-decreasing within a hypothesis.
+
+        Used by the streaming decoder to convert per-token emissions into
+        absolute audio timestamps so a sliding-window loop can commit only
+        the central zone of each window without re-emitting tokens.
+
+        Returns a list (one per batch item) of ``[(token, frame_idx), ...]``.
+        """
         self.eval()
         enc_out, enc_lengths = self.acoustic.encode(features, lengths)
         b, t_max, _ = enc_out.shape
@@ -275,10 +300,10 @@ class RnntModel(nn.Module):
             enc_lengths = torch.full((b,), t_max, device=enc_out.device, dtype=torch.long)
 
         blank = self.cfg.blank_index
-        results: list[list[int]] = []
+        results: list[list[tuple[int, int]]] = []
         for i in range(b):
             t_valid = int(enc_lengths[i].item())
-            hyp: list[int] = []
+            hyp: list[tuple[int, int]] = []
             state: tuple[torch.Tensor, torch.Tensor] | None = None
             prev_token = torch.tensor(
                 [[blank]], dtype=torch.long, device=enc_out.device
@@ -292,7 +317,7 @@ class RnntModel(nn.Module):
                     tok = int(logits[0, 0, 0].argmax().item())
                     if tok == blank:
                         break
-                    hyp.append(tok)
+                    hyp.append((tok, t))
                     prev_token = torch.tensor(
                         [[tok]], dtype=torch.long, device=enc_out.device
                     )
