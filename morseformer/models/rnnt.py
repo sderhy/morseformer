@@ -262,6 +262,7 @@ class RnntModel(nn.Module):
         features: torch.Tensor,
         lengths: torch.Tensor | None = None,
         max_emit_per_frame: int = 5,
+        confidence_threshold: float = 0.0,
     ) -> list[list[int]]:
         """Greedy RNN-T decoding: for each encoder frame, emit tokens
         until the joint predicts blank, then advance.
@@ -269,7 +270,10 @@ class RnntModel(nn.Module):
         Returns one list of non-blank token indices per batch item.
         """
         aligned = self.greedy_rnnt_decode_aligned(
-            features, lengths, max_emit_per_frame=max_emit_per_frame
+            features,
+            lengths,
+            max_emit_per_frame=max_emit_per_frame,
+            confidence_threshold=confidence_threshold,
         )
         return [[tok for tok, _ in h] for h in aligned]
 
@@ -279,6 +283,7 @@ class RnntModel(nn.Module):
         features: torch.Tensor,
         lengths: torch.Tensor | None = None,
         max_emit_per_frame: int = 5,
+        confidence_threshold: float = 0.0,
     ) -> list[list[tuple[int, int]]]:
         """Greedy RNN-T decoding that also returns the encoder frame
         index at which each non-blank token was emitted.
@@ -286,6 +291,14 @@ class RnntModel(nn.Module):
         Each emission is tagged with the encoder frame it was emitted on.
         Multiple tokens emitted at the same frame share that frame index.
         Frame indices are monotonically non-decreasing within a hypothesis.
+
+        ``confidence_threshold`` (in [0, 1]) gates emission: a candidate
+        non-blank token is emitted only if ``softmax(joint_logit)[token]``
+        exceeds the threshold. Below it, the frame is treated as a blank
+        and we advance. ``0.0`` disables gating (default — preserves
+        existing behaviour). Pre-Phase-3.2, raising this above 0.3 - 0.5
+        suppresses the silence-hallucination "letter soup" failure mode
+        without retraining.
 
         Used by the streaming decoder to convert per-token emissions into
         absolute audio timestamps so a sliding-window loop can commit only
@@ -314,7 +327,14 @@ class RnntModel(nn.Module):
                 while emitted < max_emit_per_frame:
                     f = enc_out[i : i + 1, t : t + 1, :]          # [1, 1, d_enc]
                     logits = self.joint(f, pred_out)               # [1, 1, 1, V]
-                    tok = int(logits[0, 0, 0].argmax().item())
+                    if confidence_threshold > 0.0:
+                        probs = torch.softmax(logits[0, 0, 0], dim=-1)
+                        tok = int(probs.argmax().item())
+                        # Below-threshold non-blank → treat as blank.
+                        if tok != blank and probs[tok].item() < confidence_threshold:
+                            break
+                    else:
+                        tok = int(logits[0, 0, 0].argmax().item())
                     if tok == blank:
                         break
                     hyp.append((tok, t))

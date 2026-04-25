@@ -229,3 +229,73 @@ def test_batch_runs_through_model_and_ctc() -> None:
     loss.backward()
     assert model.head.weight.grad is not None
     assert torch.any(model.head.weight.grad != 0)
+
+
+# --------------------------------------------------------------------- #
+# Phase 3.2 preset + 3-mode empty samples
+# --------------------------------------------------------------------- #
+
+
+def test_phase_3_2_preset_runs_and_yields_valid_items() -> None:
+    cfg = DatasetConfig.phase_3_2(seed=7)
+    # Sanity: preset values are wired.
+    assert cfg.empty_sample_probability == 0.20
+    assert cfg.text_mix.random == 0.30
+    assert cfg.channel_probability == 1.0
+    ds = SyntheticCWDataset(cfg)
+    it = iter(ds)
+    n_empty = n_full = 0
+    for _ in range(40):
+        item = next(it)
+        # Audio shape is identical for empty and non-empty samples.
+        assert item["features"].shape == (3000, 1)
+        assert item["features"].dtype == torch.float32
+        if item["n_tokens"] == 0:
+            n_empty += 1
+        else:
+            n_full += 1
+            t = item["tokens"]
+            assert (t > 0).all()
+            assert (t < 46).all()
+    # Both branches reachable.
+    assert n_empty > 0, "no empty samples drawn from phase_3_2 preset"
+    assert n_full > 0
+
+
+def test_phase_3_2_empty_modes_all_reachable() -> None:
+    """The 3-mode empty sampler should hit each branch within a fixed
+    seed budget. Modes are uniform 1/3 each, so 60 empties should cover
+    all three with overwhelming probability."""
+    cfg = DatasetConfig.phase_3_2(seed=11)
+    ds = SyntheticCWDataset(cfg)
+    rng = np.random.default_rng(0)
+    audios: list[np.ndarray] = []
+    for _ in range(60):
+        a, toks = ds._empty_sample_features(rng)
+        assert toks == []
+        assert a.shape == (cfg.target_samples,)
+        assert a.dtype == np.float32
+        audios.append(a)
+    # Modes can be loosely separated by RMS — pure AWGN ≈ 0.1, AWGN+QRN
+    # higher (clicks add power), distant CW similar to AWGN. Just sanity
+    # check that we get a spread of envelope statistics.
+    rms = np.array([float(np.sqrt(np.mean(a**2))) for a in audios])
+    # All finite, none zero (signal is at least the RX-filtered noise).
+    assert np.all(np.isfinite(rms))
+    assert np.all(rms > 0)
+    # Spread > some threshold proves the modes differ.
+    assert rms.std() > 0.005, f"RMS spread too tight: std={rms.std():.5f}"
+
+
+def test_phase_3_2_empty_samples_have_empty_tokens() -> None:
+    cfg = DatasetConfig.phase_3_2(
+        seed=13, empty_sample_probability=1.0,  # force empty branch
+    )
+    ds = SyntheticCWDataset(cfg)
+    it = iter(ds)
+    for _ in range(20):
+        item = next(it)
+        assert item["n_tokens"] == 0
+        assert item["tokens"].numel() == 0
+        # Audio shape unaffected.
+        assert item["features"].shape == (3000, 1)

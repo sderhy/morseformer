@@ -421,6 +421,86 @@ def sample_english_words(rng: np.random.Generator) -> str:
 
 
 # --------------------------------------------------------------------- #
+# Random character clumps (no linguistic prior)
+# --------------------------------------------------------------------- #
+
+# Punctuation tokens / prosigns sampled into the random stream. These
+# are all in the 46-token vocabulary (space and SK are space + S + K).
+_RANDOM_PUNCT: tuple[str, ...] = (",", "/", "?", "=", "-", "+", " SK")
+
+
+def _random_digits(rng: np.random.Generator, n: int) -> str:
+    return "".join(str(int(d)) for d in rng.integers(0, 10, size=n))
+
+
+def sample_random_chars(rng: np.random.Generator) -> str:
+    """Random short character clumps to break linguistic priors.
+
+    The acoustic model trained only on English / Q-codes / callsigns
+    learns linguistic priors that bias decoding toward plausible-looking
+    text on noise (the "letter-soup hallucination" failure mode observed
+    in the 2026-04-25 London↔French QSO). This sampler emits sequences
+    with no linguistic structure so the model is forced to rely on the
+    pure acoustic→character mapping.
+
+    Four modes (uniformly weighted):
+
+        * letters: 3-6 random A-Z
+        * digits:  2-5 random 0-9
+        * mixed:   4-8 chars, 70 % letters / 30 % digits
+        * with_punct: a base sequence + one inserted punctuation /
+          prosign chosen from ``_RANDOM_PUNCT``
+
+    Sometimes a sample is multi-group (e.g. ``ABCDE FGHIJ``) to mimic
+    cipher-style five-letter groups that occur in real CW practice
+    transmissions.
+    """
+    # Multi-group with 30 % probability — exposes the model to multiple
+    # short clumps separated by inter-word gaps in one utterance.
+    n_groups = 1 if rng.random() < 0.7 else int(rng.integers(2, 4))
+    groups: list[str] = []
+    for _ in range(n_groups):
+        mode = ("letters", "digits", "mixed", "with_punct")[
+            int(rng.integers(0, 4))
+        ]
+        if mode == "letters":
+            length = int(rng.integers(3, 7))           # 3..6
+            chunk = _random_letters(rng, length)
+        elif mode == "digits":
+            length = int(rng.integers(2, 6))           # 2..5
+            chunk = _random_digits(rng, length)
+        elif mode == "mixed":
+            length = int(rng.integers(4, 9))           # 4..8
+            chars: list[str] = []
+            for _ in range(length):
+                if rng.random() < 0.30:
+                    chars.append(str(int(rng.integers(0, 10))))
+                else:
+                    chars.append(chr(ord("A") + int(rng.integers(0, 26))))
+            chunk = "".join(chars)
+        else:  # with_punct
+            base_len = int(rng.integers(3, 6))
+            base_chars: list[str] = []
+            for _ in range(base_len):
+                if rng.random() < 0.30:
+                    base_chars.append(str(int(rng.integers(0, 10))))
+                else:
+                    base_chars.append(chr(ord("A") + int(rng.integers(0, 26))))
+            punct = _RANDOM_PUNCT[int(rng.integers(0, len(_RANDOM_PUNCT)))]
+            # Append, prepend, or insert at a random position.
+            place = int(rng.integers(0, 3))
+            if place == 0:
+                chunk = "".join(base_chars) + punct
+            elif place == 1:
+                chunk = punct + "".join(base_chars) if not punct.startswith(" ") else "".join(base_chars) + punct
+            else:
+                pos = int(rng.integers(1, max(2, len(base_chars))))
+                chunk = "".join(base_chars[:pos]) + punct + "".join(base_chars[pos:])
+        groups.append(chunk)
+    return " ".join(groups)
+
+
+# --------------------------------------------------------------------- #
 # Top-level mix
 # --------------------------------------------------------------------- #
 
@@ -428,16 +508,31 @@ def sample_english_words(rng: np.random.Generator) -> str:
 @dataclass(frozen=True)
 class TextMix:
     """Category weights for the top-level text sampler. Weights do not
-    need to sum to 1.0; they are normalised on use."""
+    need to sum to 1.0; they are normalised on use.
+
+    The ``random`` category emits sequences with no linguistic structure
+    (random A-Z / 0-9 / punctuation clumps, see :func:`sample_random_chars`).
+    Phase 3.2 introduces this category at significant weight to break the
+    linguistic priors that cause "letter-soup" hallucination on weak
+    signal — a model that has only ever seen English text learns to
+    output plausible-looking English on noise. Random clumps force the
+    pure acoustic→character mapping.
+
+    Defaults to 0.0 to preserve pre-Phase-3.2 behaviour for older configs.
+    """
     callsign: float
     qcode: float
     qso: float
     numeric: float
     words: float
+    random: float = 0.0
 
     def as_array(self) -> np.ndarray:
         w = np.array(
-            [self.callsign, self.qcode, self.qso, self.numeric, self.words],
+            [
+                self.callsign, self.qcode, self.qso,
+                self.numeric, self.words, self.random,
+            ],
             dtype=np.float64,
         )
         if (w < 0).any():
@@ -457,13 +552,24 @@ DEFAULT_MIX = TextMix(
 )
 
 
-_CATEGORIES = ("callsign", "qcode", "qso", "numeric", "words")
+PHASE_3_2_MIX = TextMix(
+    callsign=0.12,
+    qcode=0.14,
+    qso=0.25,
+    numeric=0.13,
+    words=0.06,
+    random=0.30,
+)
+
+
+_CATEGORIES = ("callsign", "qcode", "qso", "numeric", "words", "random")
 _SAMPLERS = {
     "callsign": sample_callsign,
     "qcode": sample_qcode_abbrev,
     "qso": sample_qso_line,
     "numeric": sample_numeric,
     "words": sample_english_words,
+    "random": sample_random_chars,
 }
 
 

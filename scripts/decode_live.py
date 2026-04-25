@@ -162,6 +162,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--read-chunk-seconds", type=float, default=0.25,
                    help="how often we pull from the audio device. "
                         "Smaller = smoother but more syscalls.")
+    p.add_argument("--confidence-threshold", type=float, default=0.0,
+                   help="drop emissions with softmax probability below "
+                        "this threshold. 0.0 disables. Try 0.3 - 0.5 on "
+                        "Phase 3.0/3.1 to suppress letter-soup on weak "
+                        "signal.")
     p.add_argument("--device", default=None,
                    help="cpu / cuda for inference (default: auto)")
     p.add_argument("--audio-device", default=None,
@@ -190,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
         frame_rate=args.frame_rate,
         carrier_hz=args.carrier,
         bandwidth_hz=args.bandwidth,
+        confidence_threshold=args.confidence_threshold,
     )
     sd = StreamingDecoder(model, sd_cfg, device=device)
 

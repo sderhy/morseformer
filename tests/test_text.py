@@ -13,6 +13,7 @@ from morseformer.data import text as text_mod
 from morseformer.data.itu_prefixes import ENTRIES
 from morseformer.data.text import (
     DEFAULT_MIX,
+    PHASE_3_2_MIX,
     TextMix,
     sample_callsign,
     sample_category,
@@ -20,6 +21,7 @@ from morseformer.data.text import (
     sample_numeric,
     sample_qcode_abbrev,
     sample_qso_line,
+    sample_random_chars,
     sample_text,
 )
 
@@ -37,6 +39,7 @@ from morseformer.data.text import (
         sample_qso_line,
         sample_numeric,
         sample_english_words,
+        sample_random_chars,
         sample_text,
     ],
 )
@@ -319,3 +322,91 @@ def test_text_length_is_reasonable() -> None:
     assert 5 <= median <= 20, f"median length {median} outside [5, 20]"
     # Long tail is allowed — the dataset layer will retry if audio > 6 s.
     assert p95 <= 50, f"95th-percentile length {p95} is too long"
+
+
+# --------------------------------------------------------------------- #
+# Random-character sampler (Phase 3.2)
+# --------------------------------------------------------------------- #
+
+
+def test_random_chars_only_in_vocab() -> None:
+    rng = np.random.default_rng(31)
+    for _ in range(2000):
+        s = sample_random_chars(rng)
+        assert len(s) > 0
+        for ch in s:
+            assert ch in TOKEN_TO_INDEX, (
+                f"out-of-vocab {ch!r} in random sample {s!r}"
+            )
+
+
+def test_random_chars_covers_letters_digits_and_punct() -> None:
+    rng = np.random.default_rng(32)
+    seen_letter = seen_digit = seen_punct = False
+    punct_set = set(",/?=-+")
+    for _ in range(2000):
+        for ch in sample_random_chars(rng):
+            if ch.isalpha():
+                seen_letter = True
+            elif ch.isdigit():
+                seen_digit = True
+            elif ch in punct_set:
+                seen_punct = True
+        if seen_letter and seen_digit and seen_punct:
+            return
+    pytest.fail(
+        f"after 2000 draws: letter={seen_letter} digit={seen_digit} "
+        f"punct={seen_punct}"
+    )
+
+
+def test_random_chars_produces_multi_group_sometimes() -> None:
+    """A non-trivial fraction of samples should contain a space
+    (multi-group, e.g. cipher-style ABCDE FGHIJ)."""
+    rng = np.random.default_rng(33)
+    n = 1000
+    multi = sum(" " in sample_random_chars(rng) for _ in range(n))
+    frac = multi / n
+    # Spec is 30 % multi-group; allow a wide tolerance.
+    assert 0.15 <= frac <= 0.50, f"multi-group fraction {frac:.3f} outside [0.15, 0.50]"
+
+
+def test_random_chars_pure_letter_mode_lengths() -> None:
+    """All-letter samples are produced by either the letter mode (3-6)
+    or by the mixed mode happening to draw 0 digits (4-8). So the
+    overall length range is 3-8."""
+    rng = np.random.default_rng(34)
+    pure_letter_lengths: list[int] = []
+    for _ in range(2000):
+        s = sample_random_chars(rng)
+        if " " not in s and s.isalpha():
+            pure_letter_lengths.append(len(s))
+    assert len(pure_letter_lengths) > 100
+    assert min(pure_letter_lengths) >= 3
+    assert max(pure_letter_lengths) <= 8
+
+
+# --------------------------------------------------------------------- #
+# Phase 3.2 mix
+# --------------------------------------------------------------------- #
+
+
+def test_phase_3_2_mix_distribution() -> None:
+    rng = np.random.default_rng(41)
+    n = 10_000
+    counts = Counter(sample_category(rng, PHASE_3_2_MIX) for _ in range(n))
+    expected = {
+        "callsign": 0.12, "qcode": 0.14, "qso": 0.25,
+        "numeric": 0.13, "words": 0.06, "random": 0.30,
+    }
+    for cat, p in expected.items():
+        frac = counts[cat] / n
+        assert abs(frac - p) < 0.03, f"{cat}: expected {p}, got {frac:.3f}"
+
+
+def test_phase_3_2_mix_text_in_vocab() -> None:
+    rng = np.random.default_rng(42)
+    for _ in range(2000):
+        t = sample_text(rng, PHASE_3_2_MIX)
+        for ch in t:
+            assert ch in TOKEN_TO_INDEX, f"oov {ch!r} in {t!r}"

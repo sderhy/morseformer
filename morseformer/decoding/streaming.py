@@ -61,6 +61,12 @@ class StreamingConfig:
         bandwidth_hz: Front-end BPF width.
         max_emit_per_frame: Cap on RNN-T emissions per encoder frame
             (matches training default).
+        confidence_threshold: Minimum softmax probability of the predicted
+            non-blank token; below this the frame is treated as a blank
+            and we advance. ``0.0`` disables gating. Raising to 0.3 - 0.5
+            on a model trained without enough silence/noise data
+            suppresses the "letter soup" hallucination on weak signal at
+            inference cost only.
     """
 
     window_seconds: float = 6.0
@@ -70,6 +76,7 @@ class StreamingConfig:
     carrier_hz: float = 600.0
     bandwidth_hz: float = 200.0
     max_emit_per_frame: int = 5
+    confidence_threshold: float = 0.0
 
 
 class StreamingDecoder:
@@ -220,7 +227,10 @@ class StreamingDecoder:
         )
         with torch.no_grad():
             aligned = self.model.greedy_rnnt_decode_aligned(
-                x, lengths, max_emit_per_frame=self.cfg.max_emit_per_frame,
+                x,
+                lengths,
+                max_emit_per_frame=self.cfg.max_emit_per_frame,
+                confidence_threshold=self.cfg.confidence_threshold,
             )[0]
 
         commit_lo, commit_hi = self._commit_zone_samples(

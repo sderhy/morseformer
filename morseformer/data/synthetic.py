@@ -35,7 +35,12 @@ from morse_synth.keying import KeyingConfig
 from morse_synth.operator import OperatorConfig
 from morseformer.core.morse_table import MORSE_TABLE, unit_seconds
 from morseformer.core.tokenizer import BLANK_INDEX, encode
-from morseformer.data.text import DEFAULT_MIX, TextMix, sample_text
+from morseformer.data.text import (
+    DEFAULT_MIX,
+    PHASE_3_2_MIX,
+    TextMix,
+    sample_text,
+)
 from morseformer.features import FrontendConfig, extract_features
 
 
@@ -225,6 +230,47 @@ class DatasetConfig:
             rx_filter_bw=500.0,
             operator_element_jitter_range=(0.0, 0.12),
             operator_gap_jitter_range=(0.0, 0.20),
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_3_2(cls, **overrides) -> "DatasetConfig":
+        """Phase 3.2 anti-hallucination curriculum.
+
+        Builds on the Phase 3.1 realistic-HF channel and adds two
+        targeted distributions to cure the failure modes seen on the
+        2026-04-25 London↔French live test (``project_live_observations_phase3_1.md``):
+
+        * **30 % random-character samples** (letters / digits / mixed /
+          with-punct, see :func:`morseformer.data.text.sample_random_chars`).
+          Breaks the linguistic priors that make the model fall back to
+          plausible-English letter-soup on weak signal.
+        * **20 % empty-audio samples** (up from Phase 3.1's 5 %), with
+          three sub-modes (pure AWGN, AWGN + QRN bursts, distant weak
+          CW labelled empty). Teaches "no decodable signal → emit
+          nothing" across the realistic distribution of "no decodable
+          signal".
+
+        Channel impairments are kept identical to Phase 3.1 — the gain
+        comes entirely from the text and label distributions.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.08),
+            operator_gap_jitter_range=(0.0, 0.15),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_2_MIX,
         )
         base.update(overrides)
         return cls(**base)
@@ -432,27 +478,75 @@ class SyntheticCWDataset(IterableDataset):
     def _empty_sample_features(
         self, rng: np.random.Generator
     ) -> tuple[np.ndarray, list[int]]:
-        """Render a pure-noise clip (no CW) paired with an empty label.
+        """Render an audio clip paired with an empty label.
 
-        SNR is drawn from the usual range but the signal RMS reference
-        is a fake impulse: we fall back to a fixed noise RMS so the
-        clip has the same scale as regular samples.
+        Three sub-modes, drawn uniformly. Each teaches a distinct
+        "no decodable signal" distribution that the model must reduce
+        to the empty hypothesis:
+
+        1. **Pure AWGN** — quiet band, no signal at all.
+        2. **AWGN + QRN bursts** — atmospheric clicks, still no carrier.
+        3. **Distant weak CW (SNR −35 to −25 dB)** — a real CW signal
+           so faint it must be ignored, paired with an empty label. This
+           is the Phase 3.2 mode that addresses the live-test failure
+           where the model emits letter-soup on weak / out-of-passband
+           signals it should not be decoding.
         """
         cfg = self.cfg
-        # Use a fixed noise RMS matched to a mid-SNR real sample so the
-        # loudness range is comparable to the rest of the distribution.
         target_samples = cfg.target_samples
         noise_rms = 0.1
-        audio = rng.normal(0.0, noise_rms, size=target_samples).astype(np.float32)
-        # Still apply the receiver filter if configured so the empty
-        # sample looks spectrally like any other sample after the RX
-        # stage. Skip QSB / QRN — the model needs a clean "silence"
-        # anchor to learn "emit nothing".
+        mode = int(rng.integers(0, 3))
+
+        if mode == 2:
+            # Distant weak CW: render at the usual carrier and drown it.
+            wpm = float(rng.uniform(*cfg.wpm_range))
+            text = self._sample_fitting_text(rng, wpm)
+            operator = self._sample_operator(rng, wpm)
+            clean = render(
+                text,
+                operator=operator,
+                keying=cfg.keying,
+                channel=None,
+                freq=cfg.freq_hz,
+                sample_rate=cfg.sample_rate,
+            )
+            clean = _pad_or_truncate(
+                clean.astype(np.float32), target_samples
+            )
+            from morse_synth.channel import apply_channel
+            ch = ChannelConfig(
+                snr_db=float(rng.uniform(-35.0, -25.0)),
+                rx_filter_bw=cfg.rx_filter_bw,
+                rx_filter_centre=cfg.freq_hz,
+                seed=int(rng.integers(0, 2**31 - 1)),
+            )
+            audio = apply_channel(clean, cfg.sample_rate, ch).astype(
+                np.float32
+            )
+            return audio, []
+
+        # Modes 0 and 1: start from white noise.
+        audio = rng.normal(0.0, noise_rms, size=target_samples).astype(
+            np.float32
+        )
+        if mode == 1:
+            # Atmospheric impulse clicks on top of the noise floor.
+            from morse_synth.channel import _add_qrn
+            audio = _add_qrn(
+                audio,
+                cfg.sample_rate,
+                rate=float(rng.uniform(0.5, 3.0)),
+                amp_db=-3.0,
+                decay_ms=1.0,
+                rng=rng,
+            ).astype(np.float32)
+        # Always apply the RX filter so empty samples are spectrally
+        # comparable to the regular distribution after the receiver stage.
         if cfg.rx_filter_bw is not None and cfg.rx_filter_bw > 0:
             from morse_synth.channel import _apply_rx_filter
             audio = _apply_rx_filter(
                 audio, cfg.sample_rate, cfg.rx_filter_bw, cfg.freq_hz
-            )
+            ).astype(np.float32)
         return audio, []
 
     def _generate_one(self, rng: np.random.Generator) -> dict:

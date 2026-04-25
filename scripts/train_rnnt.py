@@ -64,11 +64,14 @@ def build_parser() -> argparse.ArgumentParser:
                         "first N layers and re-inits the rest.")
     # Curriculum
     p.add_argument("--curriculum",
-                   choices=("phase2_0", "phase2_1", "phase2_2", "phase3_1"),
+                   choices=("phase2_0", "phase2_1", "phase2_2",
+                            "phase3_1", "phase3_2"),
                    default="phase2_1",
                    help="Dataset preset. phase2_1 = Phase 3.0 clean "
-                        "ablation. phase3_1 = realistic HF channel "
-                        "(carrier jitter, QSB, QRN, QRM, empty samples).")
+                        "ablation. phase3_1 = realistic HF channel. "
+                        "phase3_2 = phase3_1 channel + 30 % random "
+                        "sequences + 20 % 3-mode empty samples "
+                        "(anti-hallucination curriculum).")
     # SNR-laddered validation
     p.add_argument("--validation-snrs", default="",
                    help="Comma-separated SNR list for SNR-ladder validation. "
@@ -116,7 +119,9 @@ def main(argv: list[str] | None = None) -> int:
         d_joint=args.d_joint,
     )
 
-    if args.curriculum == "phase3_1":
+    if args.curriculum == "phase3_2":
+        dataset_cfg = DatasetConfig.phase_3_2(seed=args.seed)
+    elif args.curriculum == "phase3_1":
         dataset_cfg = DatasetConfig.phase_3_1(seed=args.seed)
     elif args.curriculum == "phase2_2":
         dataset_cfg = DatasetConfig.phase_2_2(seed=args.seed)
