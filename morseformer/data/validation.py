@@ -303,6 +303,110 @@ def build_snr_ladder_validation(
     return samples
 
 
+def build_noise_only_validation(
+    *,
+    cfg: ValidationConfig | None = None,
+    rx_filter_bw: float | None = 500.0,
+    n_per_mode: int = 50,
+) -> list[ValidationSample]:
+    """Build a "no decodable signal" validation set with empty labels.
+
+    The bench mirrors the 3-mode empty-audio sampler used by
+    :class:`SyntheticCWDataset` in Phase 3.2:
+
+        1. Pure AWGN — quiet band, no signal.
+        2. AWGN + QRN bursts — atmospheric clicks, no signal.
+        3. Distant weak CW (SNR -35 to -25 dB) — real CW so faint it
+           must be ignored.
+
+    Every sample has ``n_tokens == 0`` and ``text == ""``. The intended
+    metric is the mean number of characters emitted per sample —
+    target ≈ 0. This is the false-positive rate that Phase 3.2's
+    anti-hallucination curriculum is designed to drive down.
+    """
+    cfg = cfg or ValidationConfig()
+    samples: list[ValidationSample] = []
+    target_samples = cfg.target_samples
+    noise_rms = 0.1
+
+    # Mode 0 — pure AWGN (+ optional RX filter).
+    for i in range(n_per_mode):
+        rng = np.random.default_rng(cfg.seed + 401_059 + i)
+        audio = rng.normal(0.0, noise_rms, size=target_samples).astype(np.float32)
+        if rx_filter_bw is not None and rx_filter_bw > 0:
+            from morse_synth.channel import _apply_rx_filter
+            audio = _apply_rx_filter(
+                audio, cfg.sample_rate, rx_filter_bw, cfg.freq_hz
+            ).astype(np.float32)
+        samples.append(_empty_sample_from_audio(audio, cfg))
+
+    # Mode 1 — AWGN + QRN bursts (+ optional RX filter).
+    for i in range(n_per_mode):
+        rng = np.random.default_rng(cfg.seed + 401_063 + i)
+        audio = rng.normal(0.0, noise_rms, size=target_samples).astype(np.float32)
+        from morse_synth.channel import _add_qrn
+        audio = _add_qrn(
+            audio,
+            cfg.sample_rate,
+            rate=float(rng.uniform(0.5, 3.0)),
+            amp_db=-3.0,
+            decay_ms=1.0,
+            rng=rng,
+        ).astype(np.float32)
+        if rx_filter_bw is not None and rx_filter_bw > 0:
+            from morse_synth.channel import _apply_rx_filter
+            audio = _apply_rx_filter(
+                audio, cfg.sample_rate, rx_filter_bw, cfg.freq_hz
+            ).astype(np.float32)
+        samples.append(_empty_sample_from_audio(audio, cfg))
+
+    # Mode 2 — distant weak CW (real signal, SNR -35 to -25, label empty).
+    from morse_synth.channel import apply_channel
+    from morseformer.data.synthetic import _FALLBACK_SHORT_TEXTS
+    for i in range(n_per_mode):
+        rng = np.random.default_rng(cfg.seed + 401_069 + i)
+        wpm = float(rng.choice(cfg.wpm_bins))
+        text = sample_text(rng, cfg.text_mix)
+        if not text:
+            text = _FALLBACK_SHORT_TEXTS()[0]
+        clean = render(
+            text,
+            operator=OperatorConfig(wpm=wpm),
+            keying=cfg.keying,
+            channel=None,
+            freq=cfg.freq_hz,
+            sample_rate=cfg.sample_rate,
+        )
+        clean = _pad_or_truncate(clean.astype(np.float32), target_samples)
+        ch = ChannelConfig(
+            snr_db=float(rng.uniform(-35.0, -25.0)),
+            rx_filter_bw=rx_filter_bw,
+            rx_filter_centre=cfg.freq_hz,
+            seed=int(rng.integers(0, 2**31 - 1)),
+        )
+        audio = apply_channel(clean, cfg.sample_rate, ch).astype(np.float32)
+        samples.append(_empty_sample_from_audio(audio, cfg))
+
+    return samples
+
+
+def _empty_sample_from_audio(
+    audio: np.ndarray, cfg: ValidationConfig
+) -> ValidationSample:
+    """Wrap a noise-only waveform as a :class:`ValidationSample` with an
+    empty label."""
+    features = extract_features(audio, cfg.sample_rate, cfg.frontend)
+    return ValidationSample(
+        features=torch.from_numpy(features),
+        tokens=torch.zeros(0, dtype=torch.int64),
+        text="",
+        wpm=0.0,
+        snr_db=math.inf,           # distinguishes from any real-SNR sample
+        n_frames=int(features.shape[0]),
+        n_tokens=0,
+    )
+
+
 def build_realistic_ladder_validation(
     snrs_db: tuple[float, ...] = (20.0, 10.0, 5.0, 0.0, -5.0, -10.0),
     *,
