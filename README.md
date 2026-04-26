@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.1.0](https://img.shields.io/badge/release-v0.1.0-brightgreen.svg)](#release-v010)
+[![Release: v0.2.0](https://img.shields.io/badge/release-v0.2.0-brightgreen.svg)](#release-v020)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with an optional character-level language model, trained on a reproducible synthetic-HF pipeline. The **v0.1.0 release** ships a 4.1 M-parameter acoustic model that hits **0 % CER at SNR ≥ 0 dB** on the official in-distribution SNR-ladder benchmark, a 4.8 M-parameter LM, and LM-fusion decoders (shallow + ILME) for research.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.2.0 release** ships a 4.1 M-parameter acoustic model trained with an anti-hallucination curriculum: it cuts the realistic-channel CER from 52.85 % (v0.1) to **8.76 %** and reduces letter-soup hallucination on noise-only audio from ~11 chars/sample to **~1 char/sample**. A 4.8 M-parameter character LM and LM-fusion decoders (shallow + ILME) are bundled for research.
 
 ## Why
 
@@ -21,15 +21,18 @@ cd morseformer
 pip install -e ".[dev,audio]"
 pytest -q
 
-# download the release checkpoint (4.1 M params, ~33 MB)
+# download the v0.2 release checkpoint (4.1 M params, ~33 MB)
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase3_0.pt \
-    --local-dir checkpoints/phase3_0
+hf download sderhy/morseformer rnnt_phase3_2.pt \
+    --local-dir checkpoints/phase3_2
 
 # decode a .wav file (any length — audio is chunked into 6 s windows,
 # the length the model was trained on)
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase3_0/rnnt_phase3_0.pt
+    --ckpt checkpoints/phase3_2/rnnt_phase3_2.pt
+
+# OR: real-time streaming on a live receiver (PulseAudio input)
+python -m scripts.decode_live --ckpt checkpoints/phase3_2/rnnt_phase3_2.pt
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -38,6 +41,42 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
 ```
+
+## Release v0.2.0
+
+Phase 3.2 anti-hallucination curriculum + real-time streaming CLI. Three artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
+
+| file | params | description |
+|---|---|---|
+| `rnnt_phase3_2.pt` | 4.13 M | **v0.2 acoustic model** — Phase 3.1 realistic channel + 30 % random-text + 20 % 3-mode empty-audio curriculum. Recommended. |
+| `rnnt_phase3_0.pt` | 4.13 M | v0.1 acoustic model, kept for reference / reproducibility. |
+| `lm_phase4_0.pt`   | 4.76 M | Character-level LM (research, unchanged from v0.1). |
+
+Headline gains over v0.1 on the realistic-channel SNR ladder (Phase 3.1 channel: QSB / QRN / QRM / carrier jitter / drift, 300 samples):
+
+```
+  SNR (dB) |  v0.1 CER  |  v0.2 CER  |  Δ
+  ---------+------------+------------+--------
+     +20.0 |   0.2421   |   0.0067   | −24 pp
+     +10.0 |   0.3816   |   0.0000   | −38 pp
+      +5.0 |   0.3361   |   0.0000   | −34 pp
+       0.0 |   0.5000   |   0.0040   | −50 pp
+      −5.0 |   0.7871   |   0.0446   | −74 pp
+     −10.0 |   1.3316   |   0.4703   | −86 pp
+  ---------+------------+------------+--------
+  overall  |   0.5964   |   0.0876   | −51 pp
+```
+
+False-positive bench (noise-only audio, mean characters emitted per 6 s sample, target = 0):
+
+```
+  metric                        v0.1     v0.2
+  ----------------------------------------------
+  mean chars on noise         11.17     1.05
+  fraction "letter-soup" >5    98.7 %    0.0 %
+```
+
+See [MODEL_CARD.md](MODEL_CARD.md) for the full eval, including the AWGN-only regression at low SNR (a known side-effect of the strong anti-hallucination prior — see *Limitations*).
 
 ## Release v0.1.0
 
@@ -153,6 +192,22 @@ A d=144×L=16 scaling attempt (Phase 3-scale, 8 M params) tied with Phase 3.0 to
 
 A 4.76 M-param decoder-only transformer (RMSNorm, SwiGLU, RoPE, tied embeddings, causal SDPA), trained on the same synthetic text distribution as the acoustic model. Plateaued at val PPL 3.75 (step ~2.5 k); killed at step 8.5 k once it was clear the synthetic corpus was saturated. Released for research; not required for decoding.
 
+### Phase 3.1 — realistic-channel fine-tune (intermediate, not released)
+
+Phase 3.0 fine-tuned for 40 k steps on the full realistic synthetic channel: carrier-frequency jitter (±50 Hz), QSB (slow fading 0.05–1 Hz), QRN (atmospheric impulses), carrier drift, 25 % chance of a secondary CW signal at ±50–300 Hz offset (QRM), and a 5 % branch of empty-audio samples labelled with the empty string. Closed the realistic-channel CER from 59.64 % to 52.85 % (−7 pp), zero regression on the AWGN guard.
+
+Live-tested on a real IC-7300 receiver: synthetic gain only partly transferred. The model still produced "letter-soup" (long runs of `E I S T` short-symbol sequences) on quiet bands and weak signals — **the actual release-blocker**. Phase 3.1 was not published.
+
+### Phase 3.2 — anti-hallucination curriculum (v0.2 release)
+
+Same architecture, fine-tuned 80 k steps from Phase 3.1 on a curriculum that targets the live failure mode directly: **30 % random A-Z / 0-9 / punctuation sequences** (no linguistic prior — breaks the model's tendency to fall back on plausible-English letter combinations on weak signal) and **20 % "no decodable signal" samples in three sub-modes** (pure AWGN, AWGN + atmospheric impulses, distant weak CW labelled empty — teaches "real signal but below the floor is still no signal"). Channel impairments unchanged from Phase 3.1.
+
+Result: realistic-channel CER **52.85 % → 8.76 %** (−51 pp). Letter-soup hallucination on pure noise: **98.7 % → 0.0 %**. Live-validated on a real receiver across English / French poetry and contest fragments.
+
+Trade-off: AWGN-only at −5 / −10 dB regresses (4 % → 37 %, 80 % → 91 %) because the anti-hallucination prior is now strong enough that the model emits blank when a signal is real but very faint. This is desirable for real-band audio (which always has propagation impairments — the realistic bench is meaningful) but visible on synthetic AWGN-only ladders. The v0.1 checkpoint stays available on HF for applications where the AWGN-only profile is preferred.
+
+A real-time streaming decoder (`scripts/decode_live.py` v1) ships with v0.2: 6 s sliding window, 2 s hop, central-zone commit, ~4 s end-to-end latency. Replaces the v0.1 chunked decoder which stuttered at chunk boundaries (`CCCCQ`) and cut callsigns mid-word (`F4HY|Y`).
+
 ### Phase 4.1 — LM fusion does not help on synthetic data
 
 Both shallow fusion (Gulati et al. 2020) and ILME / density-ratio fusion (Meng et al. 2021, arXiv:2011.01991) were implemented on top of the RNN-T greedy decoder and swept over the SNR ladder:
@@ -182,10 +237,12 @@ Root cause: the LM and the RNN-T prediction network see **exactly the same synth
 - [x] **Phase 3-scale** — d×L ablation; capacity is not the bottleneck
 - [x] **Phase 4.0** — character-level LM (PPL 3.75)
 - [x] **Phase 4.1** — LM fusion (shallow + ILME); neutral on synthetic data
-- [ ] **Phase 3.1** — realistic synthetic channel (QRM, QRN, selective fading, real RX filter) — this is where the next real CER gain is expected
+- [x] **Phase 3.1** — realistic synthetic channel (QRM, QRN, selective fading) — fine-tune; live-validated, not released
+- [x] **Phase 3.2** — anti-hallucination curriculum (random text + 3-mode empty audio) — **v0.2 release**
+- [x] **Phase 6** — real-time streaming CLI (`scripts/decode_live.py` v1, sliding window + central-zone commit) — shipped with v0.2
+- [ ] **Phase 3.3** — multilingual prose corpus (FR / DE / ES) + W1AW real-audio finetune — addresses the English-prior bias visible on French / German poetry decoding
 - [ ] **Phase 4.2** — ham-realistic LM corpus (RBN spots, contest logs, real QSO transcripts) — prerequisite for fusion gains
-- [ ] **Phase 5** — real-audio finetuning (W1AW aligned transcripts, RBN/SDR pairings)
-- [ ] **Phase 6** — real-time streaming CLI on live IC-7300 audio
+- [ ] **Phase 5** — real-audio finetuning at scale (W1AW aligned transcripts + RBN/SDR pairings)
 - [ ] **Phase 7** — callsign-aware beam search with ITU prefix priors
 
 ## License

@@ -15,30 +15,33 @@ language:
   - en
 base_model: []
 model-index:
-  - name: morseformer-phase3-0-rnnt
+  - name: morseformer-phase3-2-rnnt
     results:
       - task:
           type: automatic-speech-recognition
           name: Morse / CW decoding
         dataset:
           type: synthetic
-          name: morseformer SNR-ladder (AWGN, 40/WPM × 5 WPM × 6 SNR)
+          name: morseformer realistic-channel ladder (Phase 3.1 channel, 50/SNR × 5 WPM × 6 SNR)
         metrics:
           - type: cer
-            value: 0.1317
-            name: Overall CER
+            value: 0.0876
+            name: Realistic-channel CER (overall)
           - type: cer
-            value: 0.0000
-            name: CER at +20 dB SNR
+            value: 0.0067
+            name: CER at +20 dB realistic
           - type: cer
-            value: 0.0000
-            name: CER at 0 dB SNR
+            value: 0.0040
+            name: CER at 0 dB realistic
           - type: cer
-            value: 0.0280
-            name: CER at −5 dB SNR
+            value: 0.0446
+            name: CER at −5 dB realistic
           - type: cer
-            value: 0.7620
-            name: CER at −10 dB SNR
+            value: 0.4703
+            name: CER at −10 dB realistic
+          - type: false_positive_chars_per_sample
+            value: 1.05
+            name: Mean characters emitted on noise-only audio (target = 0)
 ---
 
 # morseformer
@@ -46,36 +49,46 @@ model-index:
 **Open-source transformer-based Morse / CW decoder.** Conformer encoder with shared CTC and RNN-T heads, trained on synthetic HF-channel audio. Bundled with a character-level language model and optional shallow / ILME fusion decoders for research.
 
 - **Repository**: https://github.com/sderhy/morseformer
-- **Paper**: in preparation
 - **License**: Apache 2.0
 - **Language**: Morse-code text (English letters, digits, punctuation, Morse prosigns — 46-token vocabulary)
 
-This repository hosts the **v0.1.0 release** of morseformer, the first public release of the project. It is intended as a reproducible baseline for amateur-radio CW decoding and as a reference implementation for future transformer-based CW decoders.
+This repository hosts the **v0.2.0 release** of morseformer. The Phase 3.2 acoustic model (`rnnt_phase3_2.pt`) is the new recommended checkpoint: it cuts the realistic-channel CER from 52.85 % to 8.76 % vs Phase 3.1 and reduces letter-soup hallucination on noise-only audio from ~11 chars/sample to ~1 char/sample. The Phase 3.0 weights (`rnnt_phase3_0.pt`) are kept for reference / reproducibility.
+
+## What's new in v0.2.0
+
+- **`rnnt_phase3_2.pt`** — new acoustic model trained on a curriculum that adds:
+  - 30 % random A-Z / 0-9 / punctuation sequences (no linguistic prior) — breaks the hallucination tendency to fall back on plausible-English letter combinations on weak signal.
+  - 20 % "no decodable signal" samples in three modes (pure AWGN, AWGN + atmospheric impulses, distant weak CW labelled empty) — teaches "real signal but below the floor is still no signal".
+- **Real-time streaming decoder** (`scripts/decode_live.py`) — sliding 6 s window with central-zone commit. Latency ~4 s. Eliminates the chunk-boundary stutter (`CCCCQ`) and word-cut (`F4HY|Y`) artefacts of the v0.1 chunked decoder.
+- **False-positive bench** (`scripts/eval_false_positive.py`) — measures characters emitted on noise-only audio. Phase 3.0/3.1: 11+ chars/sample, ~99 % "letter-soup". Phase 3.2: ~1 char/sample, 0 % "letter-soup".
 
 ## Model artifacts
 
-| file                 | params  | description                                             |
-|----------------------|---------|---------------------------------------------------------|
-| `rnnt_phase3_0.pt`   | 4.13 M  | Main acoustic model — Conformer encoder + CTC + RNN-T.  |
-| `lm_phase4_0.pt`     | 4.76 M  | Character-level language model (optional, research).   |
+| file | params | description | recommended |
+|---|---|---|---|
+| `rnnt_phase3_2.pt` | 4.13 M | **v0.2 acoustic model** — Phase 3.1 channel + anti-hallucination curriculum. | ✅ |
+| `rnnt_phase3_0.pt` | 4.13 M | v0.1 acoustic model — AWGN-only training, kept for reference. | |
+| `lm_phase4_0.pt`   | 4.76 M | Character-level language model (optional, research). Fusion gives no measurable gain on synthetic data. | |
 
 ## Intended use
 
-- **Primary**: decoding Morse-code audio (8 kHz sample rate, carrier around 600 Hz, 500 Hz RX bandwidth) into text. Targeted at amateur-radio receivers and SDR applications.
+- **Primary**: decoding Morse-code audio (8 kHz sample rate, carrier around 600 Hz, 500 Hz RX bandwidth) into text. Targeted at amateur-radio receivers and SDR applications. v0.2 is now usable on real-band audio with reasonable quality on poetry / QSO / ragchew text in good conditions.
 - **Secondary (research)**: a reference implementation for RNN-T and LM-fusion research on a small-vocabulary (46-token) acoustic task with a fully reproducible synthetic data pipeline.
 
 ## Limitations
 
-Be honest about what v0.1 does and does not do:
+Honest about what v0.2 does and does not do:
 
-1. **Trained on synthetic audio only.** The model has never seen a real amateur-radio recording during training. Real-world audio includes channel effects (QRM, QRN, selective fading, multipath, operator timing beyond the trained jitter envelope) that were not modelled in Phase 3.0. Expect degraded performance on real SDR recordings. Phase 3.1 (realistic synthetic channel) and Phase 5 (real-audio finetuning) are the planned fixes.
-2. **Fixed training-clip length (6 seconds).** The RNN-T greedy decoder collapses on audio much longer than that when run in a single forward pass. The provided `scripts/decode_audio.py` splits long input into non-overlapping 6 s chunks and concatenates the per-chunk hypotheses — this is the recommended way to decode longer recordings.
-3. **AWGN ceiling at −10 dB.** The model's CER at −10 dB SNR is 76 %. This is close to the intrinsic floor for this task at this SNR — a trained human operator struggles in the same regime. For comparison, the rule-based DSP baseline is 1941 % CER (i.e. hallucinating) at the same operating point.
-4. **LM fusion gives no measurable gain on synthetic data.** Both shallow fusion and ILME / density-ratio fusion were implemented and swept (see `scripts/eval_fusion.py`). The λ curve is flat inside the ±0.3 pp noise floor at n = 1200. Root cause is that the LM and the RNN-T prediction network share the exact same training text distribution — fusion would need a ham-realistic LM corpus (planned for v0.2) to surface a gain.
-5. **WPM range**: the model was trained on uniform WPM ∈ [16, 28]. Outside that range (very slow < 10 WPM or very fast > 35 WPM), expect degraded accuracy.
-6. **No callsign / Q-code awareness** in v0.1. The LM biases toward in-distribution text but there is no regex-constrained beam search or ITU-prefix prior yet — that is Phase 7 on the roadmap.
+1. **Still trained on synthetic audio only.** The model has never seen a real amateur-radio recording during training. v0.2's Phase 3.1 channel covers QSB / QRN / QRM / carrier jitter / drift; v0.3 will add real W1AW recordings and a multilingual prose corpus.
+2. **English-language prior bias.** A live test on French poetry decoded `automne` as `LTOM` / `RUTOM` — the model has learned that the letter trigram `TOM` is frequent (it appears in QSO-template names and many English bigrams) and confidently extracts it from foreign words at the expense of surrounding context. Phase 3.3 will add multilingual prose to neutralise this.
+3. **AWGN low-SNR regression.** On synthetic AWGN-only at −5 / −10 dB the new model emits less content than v0.1 (CER 37 % / 91 % vs 4 % / 80 % for v0.1). This is a side-effect of the strong "blank-on-noise" prior we trained: the model now refuses to hallucinate. On the realistic-channel bench (with QRM / QSB / drift, closer to real-world conditions), v0.2 is dramatically better at every SNR. Pick `rnnt_phase3_0.pt` if your application needs aggressive output on quiet-but-faint AWGN signals.
+4. **6-second training-clip length.** The provided `scripts/decode_audio.py` (offline) and `scripts/decode_live.py` (streaming) both keep the model on its training-length distribution.
+5. **WPM range**: trained on uniform WPM ∈ [16, 28]. Outside that range expect degraded accuracy.
+6. **No callsign / Q-code-aware beam search yet** (Phase 7 on the roadmap).
 
 ## How to use
+
+### Offline decode of a `.wav` file
 
 ```bash
 pip install torch torchaudio scipy numpy
@@ -83,98 +96,96 @@ git clone https://github.com/sderhy/morseformer
 cd morseformer
 pip install -e ".[audio]"
 
-# Download the checkpoint
+# Download the v0.2 checkpoint
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase3_0.pt \
-    --local-dir checkpoints/phase3_0
+hf download sderhy/morseformer rnnt_phase3_2.pt \
+    --local-dir checkpoints/phase3_2
 
-# Decode a .wav file (any length — chunked into 6 s windows automatically)
+# Decode (any length — chunked into 6 s windows automatically)
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase3_0/rnnt_phase3_0.pt \
+    --ckpt checkpoints/phase3_2/rnnt_phase3_2.pt \
     --freq 600 --sample-rate 8000
 ```
 
-Expected output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB:
+### Real-time streaming decode
 
-```
-[decode] audio: test.wav (6.00 s @ 8000 Hz, carrier 600 Hz)
-[decode] model: ... RNN-T, 4,127,212 params, EMA on
-[decode] chunks: 1 × 6.00 s
-
-CTC  : 'CQ DE F4HYY K'
-RNN-T: 'CQ DE F4HYY K'
+```bash
+python -m scripts.decode_live --ckpt checkpoints/phase3_2/rnnt_phase3_2.pt
 ```
 
-For research use with the optional LM fusion decoder, see `morseformer/models/fusion.py` and `scripts/eval_fusion.py`.
+Tune your receiver to zero-beat at 600 Hz with a ≈ 500 Hz CW filter. `Ctrl+C` to quit. Latency is ~4 s end-to-end.
 
 ## Training data
 
 All training audio is **synthetic**, generated on the fly by the `morse_synth` package:
 
-- **Text corpus**: random-callsign strings weighted by real ITU prefix-activity distributions, contest QSO exchanges (CQ WW / ARRL-DX / SS formats), Q-codes and abbreviations, RST reports, ragchew fragments. See `morseformer/data/text.py`.
-- **Waveform renderer**: parametric operator model (WPM, element jitter, gap jitter), Morse keying with a sine carrier, HF-channel simulator (AWGN, 500 Hz RX bandpass at 600 Hz centre). See `morse_synth/`.
-- **Curriculum for Phase 3.0**: AWGN SNR ∈ U(0, 30) dB, element jitter ∈ U(0, 0.05), gap jitter ∈ U(0, 0.10), WPM ∈ U(16, 28), fixed 6 s utterances at 8 kHz. 80 k training steps.
+- **Text corpus (Phase 3.2 mix)**: callsigns 12 % (ITU-prefix-weighted), Q-codes 14 %, QSO templates 22 %, numerics 13 %, English-word stream 6 %, **random A-Z / 0-9 / punctuation 30 %**, plus a 20 % branch of empty-label audio (3 modes: AWGN, AWGN+QRN bursts, distant weak CW). See `morseformer/data/text.py` and `morseformer/data/synthetic.py`.
+- **Channel (Phase 3.1, unchanged)**: AWGN SNR ∈ U(0, 30) dB, QSB 0.05–1 Hz / 0–15 dB depth, QRN 0–1 impulse/sec, carrier-frequency jitter ±50 Hz, carrier drift 0–1 Hz/s, 25 % chance of a secondary CW signal at ±50–300 Hz offset (QRM), 500 Hz RX bandpass at 600 Hz centre.
+- **Curriculum**: 80 k training steps fp32 fine-tuned from Phase 3.1, peak LR 1e-4, 1 k warm-up, cosine decay, batch size 12, EMA 0.9999.
 
-**No real amateur-radio recordings were used for training v0.1.**
-
-## Training procedure
-
-- **Architecture**: Conformer encoder (d_model = 144, 8 layers, 4 attention heads, 4× time sub-sampling, RoPE attention, LayerNorm-based conv module) + CTC head (single linear) + RNN-T head (PredictionNetwork: 1-layer LSTM d_pred = 128, JointNetwork: d_joint = 256). Blank token index 0.
-- **Objective**: multi-task `ctc_weight = 0.3` + `rnnt_weight = 1.0`. Encoder weights bootstrapped from Phase 2.1 (CTC-only) for 80 k steps.
-- **Optimizer**: AdamW (lr 3e-4 peak, 2 k warm-up, cosine decay, weight decay 0.1), bf16 autocast, EMA 0.9999.
-- **Hardware**: single NVIDIA RTX 3060 (6 GB VRAM), ~10 h wall-clock.
+**No real amateur-radio recordings were used for training v0.2.**
 
 ## Evaluation
 
-In-distribution SNR-ladder validation (1200 samples: 40 per WPM × 5 WPM × 6 SNR; synthetic AWGN + 500 Hz RX filter; same operator-jitter distribution as training):
+### Realistic-channel SNR ladder (Phase 3.1 channel — the meaningful real-world bench)
 
-| SNR (dB) | CER      | WER      |
-|----------|----------|----------|
-| +20      | 0.0000   | 0.0000   |
-| +10      | 0.0000   | 0.0000   |
-|  +5      | 0.0000   | 0.0000   |
-|   0      | 0.0000   | 0.0000   |
-|  −5      | 0.0280   | 0.0737   |
-| −10      | 0.7620   | 0.9460   |
-| **overall** | **0.1317** | **0.1718** |
+300 samples (10 / WPM × 5 WPM × 6 SNR), full Phase 3.1 channel stack:
 
-Comparison to the rule-based DSP baseline (`fldigi`-class threshold decoder), same bench, same seed:
+| SNR (dB) | v0.1 (Phase 3.0) CER | Phase 3.1 fine-tune CER | **v0.2 (Phase 3.2) CER** | Δ vs v0.1 |
+|---|---|---|---|---|
+| +20 | 0.2421 | 0.1623 | **0.0067** | −23.54 pp |
+| +10 | 0.3816 | 0.3183 | **0.0000** | −38.16 pp |
+| +5  | 0.3361 | 0.4077 | **0.0000** | −33.61 pp |
+| 0   | 0.5000 | 0.3200 | **0.0040** | −49.60 pp |
+| −5  | 0.7871 | 0.7902 | **0.0446** | −74.25 pp |
+| −10 | 1.3316 | 1.1726 | **0.4703** | −86.13 pp |
+| **overall** | **0.5964** | **0.5285** | **0.0876** | **−51 pp** |
 
-| SNR (dB) | baseline CER | Phase 3.0 CER | speed-up |
-|----------|--------------|---------------|----------|
-|   0      |   2.5355     |   0.0000      | ∞        |
-|  −5      |   5.8327     |   0.0280      | 208 ×    |
-| −10      |  19.4111     |   0.7620      |  25 ×    |
+### AWGN guard ladder (no channel — pure AWGN regression check)
 
-At SNR ≥ 0 dB, morseformer is effectively perfect. The overall 13.17 % CER is driven entirely by the −10 dB bin, which is near the intrinsic floor for this task at this SNR.
+| SNR (dB) | v0.1 CER | **v0.2 CER** | Δ |
+|---|---|---|---|
+| +20 / +10 / +5 / 0 | 0.0000 each | 0.0000 / 0.0000 / 0.0000 / 0.0227 | flat or +2 pp |
+| −5  | 0.0407 | 0.3709 | +33 pp (regression) |
+| −10 | 0.8019 | 0.9060 | +10 pp (regression) |
+
+The AWGN regression at −5 / −10 dB is real and discussed in *Limitations* §3.
+
+### False-positive bench (noise-only audio, 150 samples × 3 modes — empty-label target)
+
+| metric | v0.1 (Phase 3.1 best) | **v0.2 (Phase 3.2)** |
+|---|---|---|
+| Mean characters emitted | 11.17 | **1.05** |
+| Median | 11.0 | 1.0 |
+| Max | 21 | 2 |
+| % "letter-soup" (>5 chars) | 98.7 % | **0.0 %** |
 
 ## Environmental impact
 
-Training budget (including Phase 0 → Phase 4.1): roughly 50 h of single-RTX-3060 wall-clock time (~0.08 kWh/h at load → ~4 kWh total). No multi-GPU, no multi-node, no hyperparameter search. Carbon impact at EU-grid median (~300 gCO₂/kWh): ~1.2 kgCO₂.
+Training budget for v0.2 (everything, Phase 0 → Phase 3.2): roughly 65 h of single-RTX-3060 wall-clock time (~0.08 kWh/h at load → ~5 kWh total). Carbon impact at EU-grid median: ~1.5 kgCO₂.
 
 ## Technical specifications
 
-**Acoustic model** (`rnnt_phase3_0.pt`, 4.13 M params):
+**Acoustic model** (`rnnt_phase3_2.pt`, 4.13 M params, identical architecture to v0.1):
 - Encoder: Conformer d=144, L=8, H=4, ff_expansion=4, conv_kernel=31, RoPE, LayerNorm conv, 4× subsample
 - CTC head: Linear(144 → 46)
 - PredictionNetwork: Embedding(46, 128) + LSTM(128, 128, 1 layer)
 - JointNetwork: Linear(144 → 256) + Linear(128 → 256) + tanh + Linear(256 → 46)
 
-**Language model** (`lm_phase4_0.pt`, 4.76 M params):
-- Decoder-only GPT, d_model=256, L=6, H=4, ff=1024 (SwiGLU), context=256, RoPE, RMSNorm, tied embeddings, causal SDPA
+**Language model** (`lm_phase4_0.pt`, 4.76 M params): unchanged from v0.1.
 
-**Vocabulary**: 46 tokens — blank (index 0), 26 uppercase letters A–Z, 10 digits 0–9, 9 punctuation / Morse prosigns ('.', ',', '?', '/', '-', '=', '+', ' ', ''').
+**Vocabulary**: 46 tokens — blank (index 0), 26 uppercase letters A–Z, 10 digits 0–9, 9 punctuation / Morse prosigns ('.', ',', '?', '!', '/', '-', '=', '+', ' ').
 
 **Front-end**: complex bandpass around the carrier (default 600 Hz ± 250 Hz), magnitude, 4× downsample to a 500 Hz frame rate, scalar normalization. Input shape `[B, T, 1]`.
 
 ## Citation
 
 ```bibtex
-@software{morseformer_v0_1_2026,
+@software{morseformer_v0_2_2026,
   author       = {Derhy, Serge},
   title        = {morseformer: open-source transformer-based Morse / CW decoder},
   year         = 2026,
-  version      = {v0.1.0},
+  version      = {v0.2.0},
   url          = {https://github.com/sderhy/morseformer},
   howpublished = {\url{https://huggingface.co/sderhy/morseformer}},
 }

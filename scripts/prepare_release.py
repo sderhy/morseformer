@@ -53,7 +53,22 @@ def build_parser() -> argparse.ArgumentParser:
         "--rnnt-ckpt", type=Path, default=Path("checkpoints/phase3_0/best_rnnt.pt"),
     )
     p.add_argument(
+        "--rnnt-name", default="rnnt_phase3_0.pt",
+        help="output filename for the stripped RNN-T checkpoint inside "
+             "--out-dir. Use a versioned name (e.g. rnnt_phase3_2.pt) when "
+             "shipping a new acoustic model alongside an older one.",
+    )
+    p.add_argument(
         "--lm-ckpt", type=Path, default=Path("checkpoints/lm_phase4_0/best.pt"),
+    )
+    p.add_argument(
+        "--lm-name", default="lm_phase4_0.pt",
+        help="output filename for the stripped LM checkpoint.",
+    )
+    p.add_argument(
+        "--skip-lm", action="store_true",
+        help="skip the LM checkpoint (useful if it has not changed since "
+             "the previous release and is already on the Hub).",
     )
     p.add_argument(
         "--readme", type=Path, default=Path("README.md"),
@@ -77,16 +92,17 @@ def main(argv: list[str] | None = None) -> int:
     out = args.out_dir
 
     print(f"[prepare_release] output: {out}/")
-    rnnt_out = out / "rnnt_phase3_0.pt"
-    lm_out = out / "lm_phase4_0.pt"
+    rnnt_out = out / args.rnnt_name
 
     rnnt_in, rnnt_done = _strip(args.rnnt_ckpt, rnnt_out)
     print(f"  rnnt:  {args.rnnt_ckpt}  ({rnnt_in/1e6:.1f} MB)  "
           f"→  {rnnt_out}  ({rnnt_done/1e6:.1f} MB)")
 
-    lm_in, lm_done = _strip(args.lm_ckpt, lm_out)
-    print(f"  lm:    {args.lm_ckpt}  ({lm_in/1e6:.1f} MB)  "
-          f"→  {lm_out}  ({lm_done/1e6:.1f} MB)")
+    if not args.skip_lm:
+        lm_out = out / args.lm_name
+        lm_in, lm_done = _strip(args.lm_ckpt, lm_out)
+        print(f"  lm:    {args.lm_ckpt}  ({lm_in/1e6:.1f} MB)  "
+              f"→  {lm_out}  ({lm_done/1e6:.1f} MB)")
 
     # HF expects the model card at ``README.md`` on the Hub. We give it
     # the ``MODEL_CARD.md`` body (which carries the YAML metadata and

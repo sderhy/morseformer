@@ -45,7 +45,9 @@ from morseformer.models.rnnt import RnntConfig, RnntModel
 
 def _candidate_paths() -> tuple[Path, ...]:
     return (
-        Path("checkpoints/phase3_1/best_rnnt.pt"),
+        Path("release/rnnt_phase3_2.pt"),
+        Path("checkpoints/phase3_2/last.pt"),
+        Path("checkpoints/phase3_2/best_rnnt.pt"),
         Path("release/rnnt_phase3_0.pt"),
         Path("checkpoints/phase3_0/best_rnnt.pt"),
     )
@@ -62,10 +64,10 @@ def _resolve_ckpt(explicit: Path | None) -> Path:
     raise SystemExit(
         "[decode_live] no checkpoint found. Tried:\n  - "
         + "\n  - ".join(str(p) for p in _candidate_paths())
-        + "\nDownload the release weights with:\n"
+        + "\nDownload the v0.2 release weights with:\n"
         "  pip install huggingface_hub\n"
-        "  hf download sderhy/morseformer rnnt_phase3_0.pt "
-        "--local-dir checkpoints/phase3_0"
+        "  hf download sderhy/morseformer rnnt_phase3_2.pt "
+        "--local-dir release"
     )
 
 
@@ -139,7 +141,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--ckpt", type=Path, default=None,
                    help="path to an RNN-T checkpoint; auto-detects "
-                        "checkpoints/phase3_1/, release/, or checkpoints/phase3_0/.")
+                        "release/rnnt_phase3_2.pt, then checkpoints/phase3_2/, "
+                        "with v0.1 fallbacks.")
     p.add_argument("--window-seconds", type=float, default=6.0,
                    help="decoder window length. Must equal training "
                         "clip length (6.0 s) — model is not robust to "
