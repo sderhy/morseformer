@@ -193,6 +193,7 @@ Training budget for v0.2 (everything, Phase 0 → Phase 3.2): roughly 65 h of si
 
 ## Acknowledgements
 
+- **Sébastien Derhy** — design, engineering, and on-air validation of morseformer.
 - **Mauri Niininen (AG1LE)** — pioneering ML-based CW decoding work.
 - **Alex Shovkoplyas (VE3NEA)** — CW Skimmer, the commercial reference.
 - **Andrej Karpathy** — `nanoGPT`, the aesthetic reference for the language model.

@@ -251,6 +251,7 @@ Apache 2.0 — see [LICENSE](LICENSE). The released model weights are distribute
 
 ## Acknowledgements
 
+- **Sébastien Derhy** — design, engineering, and on-air validation of morseformer
 - **Mauri Niininen (AG1LE)** — pioneering ML-based CW decoding work
 - **Alex Shovkoplyas (VE3NEA)** — CW Skimmer, the commercial reference
 - **Andrej Karpathy** — `nanoGPT`, the aesthetic reference for the language model
