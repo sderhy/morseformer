@@ -14,11 +14,14 @@ from morseformer.data.itu_prefixes import ENTRIES
 from morseformer.data.text import (
     DEFAULT_MIX,
     PHASE_3_2_MIX,
+    PHASE_3_3_MIX,
     TextMix,
+    _normalize_prose,
     sample_callsign,
     sample_category,
     sample_english_words,
     sample_numeric,
+    sample_prose,
     sample_qcode_abbrev,
     sample_qso_line,
     sample_random_chars,
@@ -408,5 +411,107 @@ def test_phase_3_2_mix_text_in_vocab() -> None:
     rng = np.random.default_rng(42)
     for _ in range(2000):
         t = sample_text(rng, PHASE_3_2_MIX)
+        for ch in t:
+            assert ch in TOKEN_TO_INDEX, f"oov {ch!r} in {t!r}"
+
+
+# --------------------------------------------------------------------- #
+# Multilingual prose (Phase 3.3)
+# --------------------------------------------------------------------- #
+
+
+def test_normalize_prose_german_umlauts() -> None:
+    # Umlauts and ß have no NFKD ASCII decomposition — they must be
+    # transliterated explicitly.
+    assert _normalize_prose("Mädchen", "de") == "MAEDCHEN"
+    assert _normalize_prose("schön", "de") == "SCHOEN"
+    assert _normalize_prose("über", "de") == "UEBER"
+    assert _normalize_prose("groß", "de") == "GROSS"
+    assert _normalize_prose("Äpfel Öl Übung", "de") == "AEPFEL OEL UEBUNG"
+
+
+def test_normalize_prose_french_accents_stripped() -> None:
+    # NFKD + drop combining marks turns é/è/ê/ç/à into plain letters.
+    assert _normalize_prose("été", "fr") == "ETE"
+    assert _normalize_prose("château", "fr") == "CHATEAU"
+    assert _normalize_prose("français", "fr") == "FRANCAIS"
+    assert _normalize_prose("où à è", "fr") == "OU A E"
+
+
+def test_normalize_prose_spanish_accents_and_tilde() -> None:
+    assert _normalize_prose("España", "es") == "ESPANA"
+    assert _normalize_prose("año", "es") == "ANO"
+    assert _normalize_prose("corazón", "es") == "CORAZON"
+
+
+def test_normalize_prose_apostrophes_become_space() -> None:
+    # Straight, curly and back-tick apostrophes all collapse to space.
+    assert _normalize_prose("don't", "en") == "DON T"
+    assert _normalize_prose("l'homme", "fr") == "L HOMME"
+    assert _normalize_prose("d’aujourd’hui", "fr") == "D AUJOURD HUI"
+
+
+def test_normalize_prose_dashes_normalised() -> None:
+    # Em/en dashes become a plain hyphen-minus.
+    assert _normalize_prose("here—there", "en") == "HERE-THERE"
+    assert _normalize_prose("a–b", "en") == "A-B"
+
+
+def test_normalize_prose_drops_oov_silently() -> None:
+    # Symbols outside the vocabulary should be dropped, not crash.
+    out = _normalize_prose("hello *world* (test)", "en")
+    assert out == "HELLO WORLD TEST"
+
+
+def test_sample_prose_in_vocab_and_non_empty() -> None:
+    rng = np.random.default_rng(101)
+    for _ in range(500):
+        t = sample_prose(rng)
+        assert len(t) > 0
+        for ch in t:
+            assert ch in TOKEN_TO_INDEX, f"oov {ch!r} in prose {t!r}"
+
+
+def test_sample_prose_length_bounds() -> None:
+    rng = np.random.default_rng(102)
+    # Default window 5-22 chars must hold (with mild slack for word-
+    # boundary snapping). Top end is the hard ceiling we promise to the
+    # dataset's CW-duration filter.
+    lens = [len(sample_prose(rng)) for _ in range(500)]
+    assert max(lens) <= 22, f"max length {max(lens)} exceeds the 22-char cap"
+    assert min(lens) >= 1
+
+
+def test_sample_prose_visits_all_languages() -> None:
+    # Best-effort: verify the loader exposes the four expected languages
+    # when the corpus file is present. Skip if missing (CI without data).
+    prose = text_mod._load_prose()
+    if not prose:
+        pytest.skip("data/corpus/prose.txt not present in this checkout")
+    assert set(prose.keys()) == {"en", "fr", "es", "de"}, prose.keys()
+    for lang, text in prose.items():
+        assert len(text) > 1000, f"{lang} text suspiciously short: {len(text)}"
+        # Normalised text contains only vocab characters.
+        for ch in text[:5000]:
+            assert ch in TOKEN_TO_INDEX, f"{lang}: oov {ch!r}"
+
+
+def test_phase_3_3_mix_distribution() -> None:
+    rng = np.random.default_rng(51)
+    n = 10_000
+    counts = Counter(sample_category(rng, PHASE_3_3_MIX) for _ in range(n))
+    expected = {
+        "callsign": 0.12, "qcode": 0.14, "qso": 0.25,
+        "numeric": 0.13, "words": 0.04, "random": 0.20, "prose": 0.12,
+    }
+    for cat, p in expected.items():
+        frac = counts[cat] / n
+        assert abs(frac - p) < 0.03, f"{cat}: expected {p}, got {frac:.3f}"
+
+
+def test_phase_3_3_mix_text_in_vocab() -> None:
+    rng = np.random.default_rng(52)
+    for _ in range(2000):
+        t = sample_text(rng, PHASE_3_3_MIX)
         for ch in t:
             assert ch in TOKEN_TO_INDEX, f"oov {ch!r} in {t!r}"

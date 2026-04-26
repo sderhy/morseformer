@@ -31,7 +31,10 @@ reproducibility.
 
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -501,6 +504,142 @@ def sample_random_chars(rng: np.random.Generator) -> str:
 
 
 # --------------------------------------------------------------------- #
+# Multilingual prose (Phase 3.3)
+# --------------------------------------------------------------------- #
+
+# German umlauts have no NFKD decomposition that produces ASCII letters,
+# so we must transliterate them explicitly *before* the NFKD pass.
+_DE_TRANSLIT = str.maketrans({
+    "ä": "AE", "ö": "OE", "ü": "UE", "ß": "SS",
+    "Ä": "AE", "Ö": "OE", "Ü": "UE",
+})
+
+# Apostrophes / quote-marks become spaces — the tokenizer has no
+# apostrophe, and "DON'T" → "DON T" is closer to the spoken/CW intent
+# than "DONT".
+_QUOTE_CHARS = "'’‘ʼ`´\"“”«»‹›„‟"
+
+# Allowed output characters (matches the 46-token tokenizer).
+_PROSE_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,?!/=+-")
+
+# Cap how much text we keep per language to avoid loading 8 MB into
+# memory when only a fraction is sampled per epoch. 500 KB per language
+# is more than enough variety for prose-mix at 10–15 %.
+_PROSE_CAP_BYTES = 500_000
+
+_PROSE_HEADER_RE = re.compile(r"^=== LANG=([A-Za-z]+) ID=\d+", re.MULTILINE)
+
+_PROSE_PATH = Path(__file__).resolve().parents[2] / "data" / "corpus" / "prose.txt"
+
+_PROSE_CACHE: dict[str, str] | None = None
+
+
+def _normalize_prose(text: str, lang: str) -> str:
+    """Map a unicode prose chunk to the 46-token vocabulary.
+
+    Steps: DE umlauts → ASCII, NFKD decomposition + strip combining
+    marks, quotes/apostrophes → space, em/en dashes → ``-``, uppercase,
+    drop unknown characters, collapse whitespace.
+    """
+    if lang == "de":
+        text = text.translate(_DE_TRANSLIT)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    for q in _QUOTE_CHARS:
+        text = text.replace(q, " ")
+    for d in ("—", "–", "‒", "―"):
+        text = text.replace(d, "-")
+    text = text.upper()
+    out: list[str] = []
+    for c in text:
+        if c in _PROSE_ALLOWED:
+            out.append(c)
+        elif c.isspace():
+            out.append(" ")
+        # else: drop silently
+    return re.sub(r"\s+", " ", "".join(out)).strip()
+
+
+def _load_prose() -> dict[str, str]:
+    """Lazy-load and normalize ``data/corpus/prose.txt``.
+
+    Returns ``{lang: normalized_concatenated_text}``. Empty dict if the
+    file is missing (CI / fresh checkout without data) — callers should
+    fall back gracefully.
+    """
+    global _PROSE_CACHE
+    if _PROSE_CACHE is not None:
+        return _PROSE_CACHE
+    if not _PROSE_PATH.exists():
+        _PROSE_CACHE = {}
+        return _PROSE_CACHE
+    raw = _PROSE_PATH.read_text(encoding="utf-8")
+    headers = list(_PROSE_HEADER_RE.finditer(raw))
+    by_lang: dict[str, list[str]] = {}
+    for i, m in enumerate(headers):
+        lang = m.group(1).lower()
+        body_start = raw.find("\n", m.end()) + 1
+        body_end = headers[i + 1].start() if i + 1 < len(headers) else len(raw)
+        body = raw[body_start:body_end]
+        by_lang.setdefault(lang, []).append(body)
+    out: dict[str, str] = {}
+    for lang, parts in by_lang.items():
+        normed = _normalize_prose("\n".join(parts), lang)
+        if len(normed) > _PROSE_CAP_BYTES:
+            normed = normed[:_PROSE_CAP_BYTES]
+        if len(normed) >= 200:
+            out[lang] = normed
+    _PROSE_CACHE = out
+    return out
+
+
+def _snap_to_word_boundary(text: str, start: int, end: int, slack: int = 12) -> tuple[int, int]:
+    """Adjust ``[start, end)`` to nearest word boundaries within ``slack`` chars."""
+    n = len(text)
+    if 0 < start < n and text[start - 1] != " ":
+        nxt = text.find(" ", start, min(start + slack, n))
+        if nxt != -1:
+            start = nxt + 1
+    if 0 < end < n and text[end] != " ":
+        prv = text.rfind(" ", max(end - slack, start), end)
+        if prv != -1:
+            end = prv
+    return start, end
+
+
+def sample_prose(
+    rng: np.random.Generator,
+    min_chars: int = 5,
+    max_chars: int = 22,
+) -> str:
+    """Sample a prose fragment uniformly across available languages.
+
+    Default length window matches the CW-duration budget at the bottom
+    of the WPM range (~9 chars at 16 WPM in 6 s); the dataset's
+    ``_sample_fitting_text`` retry loop will discard any over-budget
+    fragments, so keeping the cap conservative avoids wasting samples.
+
+    Falls back to ``sample_english_words`` if the corpus file is missing
+    (e.g. CI without ``data/corpus/prose.txt``) — never raises.
+    """
+    prose = _load_prose()
+    if not prose:
+        return sample_english_words(rng)
+    langs = sorted(prose.keys())
+    lang = langs[int(rng.integers(0, len(langs)))]
+    text = prose[lang]
+    n = len(text)
+    target = int(rng.integers(min_chars, max_chars + 1))
+    if n <= target:
+        return text.strip()
+    start = int(rng.integers(0, n - target + 1))
+    end = start + target
+    start, end = _snap_to_word_boundary(text, start, end)
+    fragment = text[start:end].strip()
+    return fragment if fragment else text[start : start + target].strip()
+
+
+# --------------------------------------------------------------------- #
 # Top-level mix
 # --------------------------------------------------------------------- #
 
@@ -526,12 +665,13 @@ class TextMix:
     numeric: float
     words: float
     random: float = 0.0
+    prose: float = 0.0
 
     def as_array(self) -> np.ndarray:
         w = np.array(
             [
                 self.callsign, self.qcode, self.qso,
-                self.numeric, self.words, self.random,
+                self.numeric, self.words, self.random, self.prose,
             ],
             dtype=np.float64,
         )
@@ -562,7 +702,23 @@ PHASE_3_2_MIX = TextMix(
 )
 
 
-_CATEGORIES = ("callsign", "qcode", "qso", "numeric", "words", "random")
+# Phase 3.3: add multilingual prose (FR/DE/ES/EN) to fight the English-prior
+# bias observed on real French QSOs at v0.2.0 (e.g. "TOM" inside "AUTOMNE").
+# Prose budget is taken mostly from `random` and `words` — the random
+# category is preserved at meaningful weight so the anti-hallucination
+# benefit from Phase 3.2 is not lost.
+PHASE_3_3_MIX = TextMix(
+    callsign=0.12,
+    qcode=0.14,
+    qso=0.25,
+    numeric=0.13,
+    words=0.04,
+    random=0.20,
+    prose=0.12,
+)
+
+
+_CATEGORIES = ("callsign", "qcode", "qso", "numeric", "words", "random", "prose")
 _SAMPLERS = {
     "callsign": sample_callsign,
     "qcode": sample_qcode_abbrev,
@@ -570,6 +726,7 @@ _SAMPLERS = {
     "numeric": sample_numeric,
     "words": sample_english_words,
     "random": sample_random_chars,
+    "prose": sample_prose,
 }
 
 

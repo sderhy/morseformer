@@ -38,6 +38,7 @@ from morseformer.core.tokenizer import BLANK_INDEX, encode
 from morseformer.data.text import (
     DEFAULT_MIX,
     PHASE_3_2_MIX,
+    PHASE_3_3_MIX,
     TextMix,
     sample_text,
 )
@@ -271,6 +272,45 @@ class DatasetConfig:
             qrm_offset_range_hz=(-300.0, 300.0),
             qrm_rel_db_range=(-18.0, -8.0),
             text_mix=PHASE_3_2_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_3_3(cls, **overrides) -> "DatasetConfig":
+        """Phase 3.3 multilingual prose curriculum.
+
+        Identical channel and label distributions to Phase 3.2 — the
+        only change is ``text_mix=PHASE_3_3_MIX``, which adds a 12 %
+        slice of multilingual prose (FR/DE/ES/EN, normalised to ASCII)
+        sampled from ``data/corpus/prose.txt``.
+
+        Motivation: the v0.2.0 live test on a real French QSO surfaced
+        an English-prior bias (e.g. ``TOM`` hallucinated inside
+        ``AUTOMNE``). Exposing the acoustic model to natural letter
+        bigrams in the user's actual language closes that gap.
+
+        The 30 % random-clump weight from Phase 3.2 is reduced to 20 %
+        to make room for prose; the anti-hallucination benefit is
+        preserved at meaningful weight while the linguistic prior is
+        broadened across four languages instead of one.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.08),
+            operator_gap_jitter_range=(0.0, 0.15),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_3_MIX,
         )
         base.update(overrides)
         return cls(**base)

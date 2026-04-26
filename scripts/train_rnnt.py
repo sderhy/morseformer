@@ -65,13 +65,16 @@ def build_parser() -> argparse.ArgumentParser:
     # Curriculum
     p.add_argument("--curriculum",
                    choices=("phase2_0", "phase2_1", "phase2_2",
-                            "phase3_1", "phase3_2"),
+                            "phase3_1", "phase3_2", "phase3_3"),
                    default="phase2_1",
                    help="Dataset preset. phase2_1 = Phase 3.0 clean "
                         "ablation. phase3_1 = realistic HF channel. "
-                        "phase3_2 = phase3_1 channel + 30 % random "
-                        "sequences + 20 % 3-mode empty samples "
-                        "(anti-hallucination curriculum).")
+                        "phase3_2 = phase3_1 channel + 30 %% random "
+                        "sequences + 20 %% 3-mode empty samples "
+                        "(anti-hallucination curriculum). phase3_3 = "
+                        "phase3_2 channel + 12 %% multilingual prose "
+                        "(FR/DE/ES/EN, normalised to ASCII) to fight "
+                        "the English-prior bias seen on real French QSOs.")
     # SNR-laddered validation
     p.add_argument("--validation-snrs", default="",
                    help="Comma-separated SNR list for SNR-ladder validation. "
@@ -119,7 +122,9 @@ def main(argv: list[str] | None = None) -> int:
         d_joint=args.d_joint,
     )
 
-    if args.curriculum == "phase3_2":
+    if args.curriculum == "phase3_3":
+        dataset_cfg = DatasetConfig.phase_3_3(seed=args.seed)
+    elif args.curriculum == "phase3_2":
         dataset_cfg = DatasetConfig.phase_3_2(seed=args.seed)
     elif args.curriculum == "phase3_1":
         dataset_cfg = DatasetConfig.phase_3_1(seed=args.seed)

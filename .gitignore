@@ -33,6 +33,8 @@ data/real/
 *.wav
 *.flac
 *.ogg
+# Phase 3.3 multilingual prose corpus (regenerable via data/corpus/fetch.py)
+data/corpus/prose.txt
 
 # Training artefacts
 runs/
