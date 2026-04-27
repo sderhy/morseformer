@@ -60,11 +60,17 @@ def encode(text: str) -> list[int]:
     return out
 
 
-def decode(indices: list[int]) -> str:
+def decode(indices: list[int], strip: bool = True) -> str:
     """Decode a list of token indices back to a text string.
 
     Blanks are ignored; everything else is mapped through `INDEX_TO_TOKEN`.
     Does *not* collapse CTC repeats — use `ctc_greedy_decode` for that.
+
+    ``strip`` defaults to True for backward compatibility (eval / training
+    callers want a clean text). Streaming callers must pass ``strip=False``
+    so that an inter-word space falling at a window boundary is not
+    swallowed and word-collision artefacts ("HELLOWORLD") do not appear
+    in concatenated fragments.
     """
     chars: list[str] = []
     for idx in indices:
@@ -72,7 +78,8 @@ def decode(indices: list[int]) -> str:
             continue
         if 0 <= idx < VOCAB_SIZE:
             chars.append(INDEX_TO_TOKEN[idx])
-    return "".join(chars).strip()
+    out = "".join(chars)
+    return out.strip() if strip else out
 
 
 def ctc_greedy_decode(indices: list[int]) -> str:

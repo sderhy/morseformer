@@ -257,7 +257,11 @@ class StreamingDecoder:
             kept_tokens.append(tok)
 
         self._committed_until_samples = commit_hi
-        return decode(kept_tokens)
+        # strip=False: an inter-word space falling at a window boundary
+        # would otherwise be swallowed, gluing the next word to the
+        # previous one ("HELLOWORLD"). Caller concatenates fragments
+        # and may strip the final stream output if it wants.
+        return decode(kept_tokens, strip=False)
 
     def _commit_zone_samples(
         self,

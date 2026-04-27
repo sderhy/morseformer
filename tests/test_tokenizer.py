@@ -81,3 +81,25 @@ def test_ctc_greedy_all_blank() -> None:
 def test_decode_ignores_blank() -> None:
     a = TOKEN_TO_INDEX["A"]
     assert decode([BLANK_INDEX, a, BLANK_INDEX, a]) == "AA"
+
+
+def test_decode_strip_default_removes_edge_spaces() -> None:
+    a = TOKEN_TO_INDEX["A"]
+    assert decode([SPACE_INDEX, a, SPACE_INDEX]) == "A"
+
+
+def test_decode_strip_false_preserves_edge_spaces() -> None:
+    # Streaming callers need this: an inter-word space at a window
+    # boundary must survive concatenation, otherwise consecutive
+    # fragments produce "HELLOWORLD" instead of "HELLO WORLD".
+    a = TOKEN_TO_INDEX["A"]
+    b = TOKEN_TO_INDEX["B"]
+    # Leading space (start of a new word in this fragment).
+    assert decode([SPACE_INDEX, a, b], strip=False) == " AB"
+    # Trailing space (end of a word at the window boundary).
+    assert decode([a, b, SPACE_INDEX], strip=False) == "AB "
+    # Both — concatenating two such fragments yields exactly one space
+    # between the words.
+    left = decode([a, b, SPACE_INDEX], strip=False)
+    right = decode([a, b], strip=False)
+    assert left + right == "AB AB"
