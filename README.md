@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.2.0](https://img.shields.io/badge/release-v0.2.0-brightgreen.svg)](#release-v020)
+[![Release: v0.3.0](https://img.shields.io/badge/release-v0.3.0-brightgreen.svg)](#release-v030)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.2.0 release** ships a 4.1 M-parameter acoustic model trained with an anti-hallucination curriculum: it cuts the realistic-channel CER from 52.85 % (v0.1) to **8.76 %** and reduces letter-soup hallucination on noise-only audio from ~11 chars/sample to **~1 char/sample**. A 4.8 M-parameter character LM and LM-fusion decoders (shallow + ILME) are bundled for research.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.3.0 release** ships a 4.1 M-parameter acoustic model trained with an anti-hallucination curriculum and a multilingual (FR/DE/ES/EN) prose mix: it cuts the realistic-channel CER from 8.38 % (v0.2) to **7.49 %**, partly recovers the AWGN low-SNR regression v0.2 had introduced, fixes a streaming-decoder bug that swallowed inter-word spaces at window boundaries, and decodes recognisable French / English prose word-by-word in live tests. A 4.8 M-parameter character LM and LM-fusion decoders (shallow + ILME) are bundled for research.
 
 ## Why
 
@@ -21,18 +21,18 @@ cd morseformer
 pip install -e ".[dev,audio]"
 pytest -q
 
-# download the v0.2 release checkpoint (4.1 M params, ~33 MB)
+# download the v0.3 release checkpoint (4.1 M params, ~33 MB)
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase3_2.pt \
-    --local-dir checkpoints/phase3_2
+hf download sderhy/morseformer rnnt_phase3_3.pt \
+    --local-dir checkpoints/phase3_3
 
 # decode a .wav file (any length — audio is chunked into 6 s windows,
 # the length the model was trained on)
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase3_2/rnnt_phase3_2.pt
+    --ckpt checkpoints/phase3_3/rnnt_phase3_3.pt
 
 # OR: real-time streaming on a live receiver (PulseAudio input)
-python -m scripts.decode_live --ckpt checkpoints/phase3_2/rnnt_phase3_2.pt
+python -m scripts.decode_live --ckpt checkpoints/phase3_3/rnnt_phase3_3.pt
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -42,13 +42,66 @@ CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
 ```
 
-## Release v0.2.0
+## Release v0.3.0
 
-Phase 3.2 anti-hallucination curriculum + real-time streaming CLI. Three artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
+Phase 3.3 multilingual prose curriculum + streaming-decoder space-bug fix. Four artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
 
 | file | params | description |
 |---|---|---|
-| `rnnt_phase3_2.pt` | 4.13 M | **v0.2 acoustic model** — Phase 3.1 realistic channel + 30 % random-text + 20 % 3-mode empty-audio curriculum. Recommended. |
+| `rnnt_phase3_3.pt` | 4.13 M | **v0.3 acoustic model** — Phase 3.2 channel + 12 % multilingual prose (FR / DE / ES / EN) drawn from Project Gutenberg. Recommended. |
+| `rnnt_phase3_2.pt` | 4.13 M | v0.2 acoustic model — anti-hallucination curriculum, no multilingual data. |
+| `rnnt_phase3_0.pt` | 4.13 M | v0.1 acoustic model — AWGN-only training. |
+| `lm_phase4_0.pt`   | 4.76 M | Character-level LM (research, unchanged from v0.1). |
+
+Headline gains over v0.2 on the realistic-channel SNR ladder (1200 samples, 40 / WPM × 5 WPM × 6 SNR; full Phase 3.1 channel: QSB / QRN / QRM / carrier jitter / drift):
+
+```
+  SNR (dB) | v0.2 (3.2) CER | v0.3 (3.3) CER |  Δ
+  ---------+----------------+----------------+--------
+     +20.0 |   0.0017       |   0.0000       |  −0.17 pp
+     +10.0 |   0.0000       |   0.0000       |   0.00 pp
+      +5.0 |   0.0000       |   0.0000       |   0.00 pp
+       0.0 |   0.0030       |   0.0030       |   0.00 pp
+      −5.0 |   0.0542       |   0.0502       |  −0.40 pp
+     −10.0 |   0.4442       |   0.3965       |  −4.77 pp
+  ---------+----------------+----------------+--------
+  overall  |   0.0838       |   0.0749       |  −0.89 pp
+```
+
+AWGN guard ladder (no QSB/QRN/QRM, pure AWGN — the regression bench from v0.2):
+
+```
+  SNR (dB) | v0.2 CER | v0.3 CER |  Δ
+  ---------+----------+----------+----------
+       0.0 |   0.0229 |   0.0099 |  −1.30 pp
+      −5.0 |   0.3348 |   0.2943 |  −4.05 pp
+     −10.0 |   0.8919 |   0.8826 |  −0.92 pp
+  ---------+----------+----------+----------
+  overall  |   0.2083 |   0.1978 |  −1.05 pp
+```
+
+The v0.2-introduced AWGN regression at low SNR is partly recovered in v0.3 — the multilingual prose appears to make the anti-hallucination prior less brittle on noise-shaped inputs.
+
+False-positive bench (noise-only audio, mean characters emitted per 6 s sample, target = 0):
+
+```
+  metric                     v0.1     v0.2     v0.3
+  --------------------------------------------------
+  mean chars on noise       11.17     1.05     1.01
+  fraction "letter-soup"   98.7 %    0.0 %    0.0 %
+```
+
+Streaming-decoder bug fix included in v0.3: `tokenizer.decode()` previously called `.strip()` on every output, dropping any inter-word space landing at a window boundary. Multi-word prose like `LE PONT MIRABEAU COULE LA SEINE` came back as `LEPONTMIRABEAUCOULELASEINE`. Fixed in `tokenizer.decode(strip=False)` for streaming callers (see commit `ecba5f9`); v0.1 and v0.2 also benefit if you rebuild from source.
+
+Live-validated on a real IC-7300 with `scripts/decode_live.py` on a mixed-language stream of CQ macros + Verlaine *Chanson d'automne* + Poe *Annabel Lee* + Apollinaire *Le Pont Mirabeau* (2026-04-27) — see [MODEL_CARD.md](MODEL_CARD.md) for the full verdict and the failure modes earmarked for Phase 3.4.
+
+## Release v0.2.0
+
+Phase 3.2 anti-hallucination curriculum + real-time streaming CLI. Artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
+
+| file | params | description |
+|---|---|---|
+| `rnnt_phase3_2.pt` | 4.13 M | v0.2 acoustic model — Phase 3.1 realistic channel + 30 % random-text + 20 % 3-mode empty-audio curriculum. |
 | `rnnt_phase3_0.pt` | 4.13 M | v0.1 acoustic model, kept for reference / reproducibility. |
 | `lm_phase4_0.pt`   | 4.76 M | Character-level LM (research, unchanged from v0.1). |
 
@@ -240,9 +293,10 @@ Root cause: the LM and the RNN-T prediction network see **exactly the same synth
 - [x] **Phase 3.1** — realistic synthetic channel (QRM, QRN, selective fading) — fine-tune; live-validated, not released
 - [x] **Phase 3.2** — anti-hallucination curriculum (random text + 3-mode empty audio) — **v0.2 release**
 - [x] **Phase 6** — real-time streaming CLI (`scripts/decode_live.py` v1, sliding window + central-zone commit) — shipped with v0.2
-- [ ] **Phase 3.3** — multilingual prose corpus (FR / DE / ES) + W1AW real-audio finetune — addresses the English-prior bias visible on French / German poetry decoding
+- [x] **Phase 3.3** — multilingual prose corpus (FR / DE / ES / EN, ASCII-normalised) — **v0.3 release**; closes the English-prior bias on French live audio
+- [ ] **Phase 3.4** — extend the 46-token vocabulary to 49 tokens with the French-specific Morse codes for `é` (`..-..`), `à` (`.--.-`), and apostrophe (`.----.`); retrain from scratch. Addresses the live-test failure where `L'AUTOMNE` is decoded as `L1AUTOMNE`.
 - [ ] **Phase 4.2** — ham-realistic LM corpus (RBN spots, contest logs, real QSO transcripts) — prerequisite for fusion gains
-- [ ] **Phase 5** — real-audio finetuning at scale (W1AW aligned transcripts + RBN/SDR pairings)
+- [ ] **Phase 5** — real-audio finetuning at scale (W1AW aligned transcripts + RBN/SDR pairings + user IC-7300 captures)
 - [ ] **Phase 7** — callsign-aware beam search with ITU prefix priors
 
 ## License
@@ -255,6 +309,7 @@ Apache 2.0 — see [LICENSE](LICENSE). The released model weights are distribute
 - **Mauri Niininen (AG1LE)** — pioneering ML-based CW decoding work
 - **Alex Shovkoplyas (VE3NEA)** — CW Skimmer, the commercial reference
 - **Andrej Karpathy** — `nanoGPT`, the aesthetic reference for the language model
+- **Project Gutenberg** — public-domain literary texts in English, French, German, and Spanish used to build the Phase 3.3 multilingual prose corpus
 - The amateur-radio community — decades of publicly available CW recordings and transcripts
 
 ---

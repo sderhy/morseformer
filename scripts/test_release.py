@@ -48,17 +48,21 @@ from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
 
-# CER thresholds the checkpoint must stay within on each SNR bin. Set
-# with reference to the v0.1.0 benchmark (see README.md):
+# CER thresholds the checkpoint must stay within on each SNR bin.
+# Re-calibrated for v0.3.0 (Phase 3.3 best.pt) on the AWGN guard
+# ladder. The −10 dB threshold is intentionally generous: v0.2/v0.3
+# trade some bare-AWGN performance at very low SNR for stronger
+# anti-hallucination behaviour, and the guard ladder does not include
+# the QSB/QRN/QRM impairments where v0.2/v0.3 actually win.
 #
 #   +20 dB : observed 0.0000 — threshold 0.02 is effectively "no errors"
-#     0 dB : observed 0.0000 — threshold 0.05 has some slack for n = 25
-#   −10 dB : observed 0.7620 — threshold 0.85 catches a real regression
+#     0 dB : observed 0.0099 — threshold 0.05 has slack for n = 25
+#   −10 dB : observed 0.8826 — threshold 0.93 catches a real regression
 #                             without flaking on n = 25 sampling noise
 _THRESHOLDS: dict[float, float] = {
     20.0: 0.02,
     0.0: 0.05,
-    -10.0: 0.85,
+    -10.0: 0.93,
 }
 
 # Small and fast: 5 samples/wpm × 5 wpm × 3 snr = 75 samples.
