@@ -39,6 +39,8 @@ from morseformer.data.text import (
     DEFAULT_MIX,
     PHASE_3_2_MIX,
     PHASE_3_3_MIX,
+    PHASE_3_4_MIX,
+    PHASE_3_6_MIX,
     TextMix,
     sample_text,
 )
@@ -173,6 +175,17 @@ class DatasetConfig:
     # failure mode observed on real-air audio.
     empty_sample_probability: float = 0.0
 
+    # Phase 3.6 — post-emission silence curriculum. With this
+    # probability, draw a *very short* text, render it normally, and
+    # let the standard pad-or-truncate fill the rest of the buffer with
+    # silence. Label = real tokens (non-empty), so the model is forced
+    # to learn "after the last symbol → emit nothing on the trailing
+    # silence". Targets the residual sentence-boundary É hallucination
+    # observed in the post-Phase-3.5 live test (e.g. ``PLEURE.É``).
+    post_emission_silence_probability: float = 0.0
+    # Length window for the short text (in characters, before render).
+    post_emission_silence_text_chars: tuple[int, int] = (1, 5)
+
     # QRM: co-channel interference. With probability ``qrm_probability``,
     # render a second independent CW utterance at ``freq_hz + U(offset)``
     # and mix it into the primary at ``U(qrm_rel_db_range)`` relative power.
@@ -272,6 +285,128 @@ class DatasetConfig:
             qrm_offset_range_hz=(-300.0, 300.0),
             qrm_rel_db_range=(-18.0, -8.0),
             text_mix=PHASE_3_2_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_3_6(cls, **overrides) -> "DatasetConfig":
+        """Phase 3.6 adversarial-FR + post-emission-silence curriculum.
+
+        Builds on Phase 3.5 (wider operator-jitter, full Phase 3.4
+        French mix) and adds two targeted distributions to close the
+        last three live failure modes observed at the end of the
+        Phase 3.5 evaluation:
+
+        * 6 % ``adversarial_fr`` text — fragments of FR prose +
+          FAV22-clair concentrated on ``W + vowel`` and ``QU + vowel``
+          patterns where the Phase 3.5 model still false-positives É /
+          À (`WAS A AN` → `ÀS A AN`, `QUAND` → `QÉND`).
+        * 10 % ``post_emission_silence`` samples — short text padded
+          with trailing silence, label = real tokens, so the model
+          learns that the silence after the last symbol must not
+          produce a hallucinated follow-up token (e.g. spurious É at
+          sentence end).
+
+        Channel and jitter knobs are kept identical to Phase 3.5; the
+        gain comes from the new text and label distributions only.
+        Bootstrap target: ``checkpoints/phase3_5/best_rnnt.pt``.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.15),
+            operator_gap_jitter_range=(0.0, 0.25),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            post_emission_silence_probability=0.10,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_6_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_3_5(cls, **overrides) -> "DatasetConfig":
+        """Phase 3.5 wider-jitter curriculum.
+
+        Identical to Phase 3.4 except for the operator-jitter ranges,
+        which are widened from ``(0, 0.08)`` element / ``(0, 0.15)``
+        gap to ``(0, 0.15)`` element / ``(0, 0.25)`` gap. The 2026-04-28
+        live test on real morning keying surfaced systematic
+        false-positive emissions of É / À at sentence boundaries and
+        on tight ``W + vowel`` patterns: the user's hand-keyed timing
+        sat at the upper edge of the Phase 3.4 jitter envelope, so
+        characters like ``F + space + E`` or ``LD`` produced acoustic
+        signals that fell into the basin of attraction of the new
+        tokens (``É`` = ``..-..`` shares its prefix with ``F`` =
+        ``..-.``). Widening the training jitter teaches the model to
+        require *clearer* acoustic evidence for the new tokens.
+
+        Bootstrap target: ``checkpoints/phase3_4/last.pt`` — the
+        49-vocab tokenizer is already in place, so no checkpoint
+        extension is needed.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.15),
+            operator_gap_jitter_range=(0.0, 0.25),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_4_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_3_4(cls, **overrides) -> "DatasetConfig":
+        """Phase 3.4 French-CW curriculum.
+
+        Identical channel and label distributions to Phases 3.2 / 3.3 —
+        only the text mix changes. The tokenizer is extended from 46 to
+        49 tokens (É / À / apostrophe added) and ``PHASE_3_4_MIX``
+        biases the text sampler toward French-only prose so the freshly
+        initialised vocab rows for the new tokens see enough gradient
+        during a short fine-tune.
+
+        Motivation: Phase 3.3 closed the multilingual prose gap on real
+        French QSOs by exposing the model to natural FR bigrams, but
+        diacritics were stripped to ASCII (``ÉTÉ`` → ``ETE``). Phase 3.4
+        preserves the diacritics end-to-end so the model can transcribe
+        French CW the way it is actually written and sent on air.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.08),
+            operator_gap_jitter_range=(0.0, 0.15),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_4_MIX,
         )
         base.update(overrides)
         return cls(**base)
@@ -515,6 +650,57 @@ class SyntheticCWDataset(IterableDataset):
         qrm_audio = _pad_or_truncate(qrm_audio, target_samples)
         return qrm_audio.astype(np.float32) * (10.0 ** (qrm_rel_db / 20.0))
 
+    def _post_emission_silence_features(
+        self, rng: np.random.Generator
+    ) -> tuple[np.ndarray, list[int]]:
+        """Render a *short* utterance and let the trailing buffer fill
+        with silence. Label is the real (non-empty) token sequence.
+
+        This branch teaches the model that the silence following the
+        last emitted symbol must produce *no* output — addressing the
+        residual end-of-phrase token hallucination (e.g. spurious É at
+        sentence end) seen on the post-Phase-3.5 live test.
+        """
+        cfg = self.cfg
+        target_samples = cfg.target_samples
+        lo_chars, hi_chars = cfg.post_emission_silence_text_chars
+
+        text: str | None = None
+        for _ in range(8):
+            candidate = sample_text(rng, cfg.text_mix)
+            if lo_chars <= len(candidate) <= hi_chars:
+                text = candidate
+                break
+        if text is None:
+            short = _FALLBACK_SHORT_TEXTS()
+            text = short[int(rng.integers(0, len(short)))]
+
+        wpm = float(rng.uniform(*cfg.wpm_range))
+        operator = self._sample_operator(rng, wpm)
+        freq = self._sample_carrier_freq(rng)
+        clean = render(
+            text,
+            operator=operator,
+            keying=cfg.keying,
+            channel=None,
+            freq=freq,
+            sample_rate=cfg.sample_rate,
+        )
+        clean = _pad_or_truncate(
+            clean.astype(np.float32), target_samples
+        )
+        channel = self._sample_channel(rng)
+        if channel is not None:
+            from morse_synth.channel import apply_channel
+            audio = apply_channel(clean, cfg.sample_rate, channel).astype(
+                np.float32
+            )
+        else:
+            audio = clean
+        audio = _pad_or_truncate(audio, target_samples)
+        tokens = encode(text)
+        return audio, list(tokens)
+
     def _empty_sample_features(
         self, rng: np.random.Generator
     ) -> tuple[np.ndarray, list[int]]:
@@ -606,6 +792,23 @@ class SyntheticCWDataset(IterableDataset):
                 "tokens": torch.tensor(tokens_list, dtype=torch.int64),
                 "n_frames": int(features.shape[0]),
                 "n_tokens": 0,
+            }
+
+        # Post-emission silence branch (Phase 3.6): short text + long
+        # trailing silence, label = real tokens. Forces the model to
+        # learn "after the last symbol → silence, not a hallucinated
+        # follow-up token".
+        if (
+            cfg.post_emission_silence_probability > 0.0
+            and rng.random() < cfg.post_emission_silence_probability
+        ):
+            audio, tokens_list = self._post_emission_silence_features(rng)
+            features = extract_features(audio, cfg.sample_rate, cfg.frontend)
+            return {
+                "features": torch.from_numpy(features),
+                "tokens": torch.tensor(tokens_list, dtype=torch.int64),
+                "n_frames": int(features.shape[0]),
+                "n_tokens": int(len(tokens_list)),
             }
 
         wpm = float(rng.uniform(*cfg.wpm_range))

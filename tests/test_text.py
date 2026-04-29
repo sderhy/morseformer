@@ -92,14 +92,36 @@ def test_no_generator_produces_empty_string() -> None:
 
 
 def test_every_non_blank_token_is_reachable() -> None:
+    """Every legacy 46-token entry must be reachable from DEFAULT_MIX.
+
+    The Phase 3.4 additions (É / À / apostrophe) only appear in the
+    French-prose stream and are exercised by the dedicated test
+    ``test_phase_3_4_tokens_reachable_via_phase_3_4_mix`` below.
+    """
     rng = np.random.default_rng(0)
     seen: set[str] = set()
     for _ in range(10_000):
         for ch in sample_text(rng):
             seen.add(ch)
-    all_non_blank = {tok for tok, idx in TOKEN_TO_INDEX.items() if idx != BLANK_INDEX}
-    missing = all_non_blank - seen
+    legacy_tokens = {
+        tok for tok, idx in TOKEN_TO_INDEX.items()
+        if idx != BLANK_INDEX and tok not in {"É", "À", "'"}
+    }
+    missing = legacy_tokens - seen
     assert not missing, f"tokens never produced in 10k draws: {sorted(missing)}"
+
+
+def test_phase_3_4_tokens_reachable_via_phase_3_4_mix() -> None:
+    """The three Phase 3.4 tokens must surface from PHASE_3_4_MIX so a
+    fine-tune actually exercises the freshly initialised vocab rows."""
+    from morseformer.data.text import PHASE_3_4_MIX
+    rng = np.random.default_rng(0)
+    seen: set[str] = set()
+    for _ in range(5_000):
+        for ch in sample_text(rng, PHASE_3_4_MIX):
+            seen.add(ch)
+    for tok in ("É", "À", "'"):
+        assert tok in seen, f"Phase 3.4 token {tok!r} never produced in 5k draws"
 
 
 # --------------------------------------------------------------------- #
@@ -430,12 +452,18 @@ def test_normalize_prose_german_umlauts() -> None:
     assert _normalize_prose("Äpfel Öl Übung", "de") == "AEPFEL OEL UEBUNG"
 
 
-def test_normalize_prose_french_accents_stripped() -> None:
-    # NFKD + drop combining marks turns é/è/ê/ç/à into plain letters.
-    assert _normalize_prose("été", "fr") == "ETE"
+def test_normalize_prose_french_accents_phase_3_4() -> None:
+    # Phase 3.4: é → É and à → À are preserved (vocab tokens 46 and 47).
+    # è / ê / ç / ù still fall back to ASCII via per-char NFKD because
+    # they have no dedicated CW token.
+    assert _normalize_prose("été", "fr") == "ÉTÉ"
+    assert _normalize_prose("à", "fr") == "À"
     assert _normalize_prose("château", "fr") == "CHATEAU"
     assert _normalize_prose("français", "fr") == "FRANCAIS"
-    assert _normalize_prose("où à è", "fr") == "OU A E"
+    # ù has no dedicated token → ASCII fallback; à kept; è → E.
+    assert _normalize_prose("où à è", "fr") == "OU À E"
+    # Mixed with apostrophe (also a Phase 3.4 token).
+    assert _normalize_prose("L'été à Paris", "fr") == "L'ÉTÉ À PARIS"
 
 
 def test_normalize_prose_spanish_accents_and_tilde() -> None:
@@ -444,11 +472,14 @@ def test_normalize_prose_spanish_accents_and_tilde() -> None:
     assert _normalize_prose("corazón", "es") == "CORAZON"
 
 
-def test_normalize_prose_apostrophes_become_space() -> None:
-    # Straight, curly and back-tick apostrophes all collapse to space.
-    assert _normalize_prose("don't", "en") == "DON T"
-    assert _normalize_prose("l'homme", "fr") == "L HOMME"
-    assert _normalize_prose("d’aujourd’hui", "fr") == "D AUJOURD HUI"
+def test_normalize_prose_apostrophes_kept_phase_3_4() -> None:
+    # Phase 3.4: straight, curly, back-tick and prime apostrophes all
+    # collapse to the canonical ASCII apostrophe (vocab token 48), no
+    # longer to whitespace.
+    assert _normalize_prose("don't", "en") == "DON'T"
+    assert _normalize_prose("l'homme", "fr") == "L'HOMME"
+    assert _normalize_prose("d’aujourd’hui", "fr") == "D'AUJOURD'HUI"
+    assert _normalize_prose("d`aujourd`hui", "fr") == "D'AUJOURD'HUI"
 
 
 def test_normalize_prose_dashes_normalised() -> None:
@@ -513,5 +544,84 @@ def test_phase_3_3_mix_text_in_vocab() -> None:
     rng = np.random.default_rng(52)
     for _ in range(2000):
         t = sample_text(rng, PHASE_3_3_MIX)
+        for ch in t:
+            assert ch in TOKEN_TO_INDEX, f"oov {ch!r} in {t!r}"
+
+
+# --------------------------------------------------------------------- #
+# French adversarial sampler + Phase 3.6 mix
+# --------------------------------------------------------------------- #
+
+
+def test_french_adversarial_in_vocab_and_non_empty() -> None:
+    from morseformer.data.text import sample_french_adversarial
+    rng = np.random.default_rng(201)
+    for _ in range(500):
+        t = sample_french_adversarial(rng)
+        assert len(t) > 0
+        for ch in t:
+            assert ch in TOKEN_TO_INDEX, f"oov {ch!r} in {t!r}"
+
+
+def test_french_adversarial_hits_target_patterns() -> None:
+    """Across many draws the adversarial sampler must concentrate on
+    the W+vowel and QU+vowel patterns at well above the natural prose
+    density (~6 %). Skips silently if the FR corpus is missing.
+    """
+    import re as _re
+    from morseformer.data.text import (
+        _adversarial_corpus_text,
+        sample_french_adversarial,
+    )
+    if not _adversarial_corpus_text():
+        pytest.skip("FR corpus / FAV22 not present")
+    rng = np.random.default_rng(202)
+    pat = _re.compile(r"W[ \-]?[AEIOUYÀÉ]|QU[AEIOUYÀÉ]")
+    hits = sum(1 for _ in range(500) if pat.search(sample_french_adversarial(rng)))
+    # Synthetic mode is 50 % of draws and *aims* at a target bigram,
+    # but the word-boundary snap can occasionally clip the pattern out
+    # of the window when the match sits near the edge. Combined hit
+    # rate sits around 45-55 %; the floor is the order-of-magnitude
+    # check that the sampler concentrates on the target patterns far
+    # above the ~5 % natural prose baseline.
+    assert hits >= 200, f"adversarial sampler only hit {hits}/500 draws"
+
+
+def test_fav22_loader_returns_clair_only_or_empty() -> None:
+    """Loader must include some clair text when the JSONL exists and
+    skip codé blocks. Skips when the corpus file isn't shipped."""
+    fav = text_mod._load_fav22_clair()
+    if not fav:
+        pytest.skip("FAV22 corpus not present")
+    # Codé blocks contain digit-letter five-character groups separated
+    # by spaces. A clair-only stream still has lots of A-Z plus FR
+    # tokens, so a quick spot-check is to count the new FR tokens that
+    # never occur in codé blocks.
+    fr_token_count = sum(fav.count(t) for t in ("É", "À", "'"))
+    assert fr_token_count > 50, (
+        f"FAV22 clair stream looks empty of FR tokens: {fr_token_count}"
+    )
+
+
+def test_phase_3_6_mix_distribution() -> None:
+    from morseformer.data.text import PHASE_3_6_MIX
+    rng = np.random.default_rng(61)
+    n = 10_000
+    counts = Counter(sample_category(rng, PHASE_3_6_MIX) for _ in range(n))
+    expected = {
+        "callsign": 0.10, "qcode": 0.12, "qso": 0.20,
+        "numeric": 0.12, "words": 0.03, "random": 0.16,
+        "prose": 0.08, "prose_fr": 0.13, "adversarial_fr": 0.06,
+    }
+    for cat, p in expected.items():
+        frac = counts[cat] / n
+        assert abs(frac - p) < 0.03, f"{cat}: expected {p}, got {frac:.3f}"
+
+
+def test_phase_3_6_mix_text_in_vocab() -> None:
+    from morseformer.data.text import PHASE_3_6_MIX
+    rng = np.random.default_rng(62)
+    for _ in range(2000):
+        t = sample_text(rng, PHASE_3_6_MIX)
         for ch in t:
             assert ch in TOKEN_TO_INDEX, f"oov {ch!r} in {t!r}"

@@ -1,10 +1,11 @@
 """Character-level tokenizer for the CW acoustic model.
 
-A fixed 46-token vocabulary covering everything the Phase-0 synthesiser
-can emit plus the CTC blank. Prosigns are not given dedicated tokens —
-they are rendered as their printed equivalents (`<BT>` → `=`,
-`<AR>` → `+`, etc.) where convenient, so the model can work in a flat
-character space without special-case handling.
+A fixed 49-token vocabulary covering everything the synthesiser can
+emit plus the CTC blank, including the three French CW characters
+(É / À / apostrophe) added in Phase 3.4. Prosigns are not given
+dedicated tokens — they are rendered as their printed equivalents
+(`<BT>` → `=`, `<AR>` → `+`, etc.) where convenient, so the model
+can work in a flat character space without special-case handling.
 
 Layout:
 
@@ -13,8 +14,11 @@ Layout:
     index  2–27      →  A–Z
     index 28–37      →  0–9
     index 38–45      →  . , ? ! / = + -
+    index 46–48      →  É À '    (Phase 3.4 French CW additions)
 
 Characters outside the vocabulary are silently dropped during encoding.
+``encode()`` calls ``str.upper()`` first, so French source text written
+in lowercase ("été", "à") is normalised to É / À before tokenisation.
 """
 
 from __future__ import annotations
@@ -23,17 +27,28 @@ BLANK_TOKEN = "<blank>"
 BLANK_INDEX = 0
 SPACE_INDEX = 1
 
+# Phase 3.4 additions appended at the tail so that pretrained checkpoints
+# from Phases 2.x / 3.0–3.3 can be extended in-place: the first 46 indices
+# keep their meaning and only the new rows in joint.out / pred.embed /
+# acoustic.head need random initialisation. See
+# scripts/extend_tokenizer_46_to_49.py.
 _VOCAB: list[str] = (
     [BLANK_TOKEN, " "]
     + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     + list("0123456789")
     + list(".,?!/=+-")
+    + ["É", "À", "'"]
 )
 
 # Bidirectional lookup tables.
 TOKEN_TO_INDEX: dict[str, int] = {tok: i for i, tok in enumerate(_VOCAB)}
 INDEX_TO_TOKEN: list[str] = list(_VOCAB)
-VOCAB_SIZE: int = len(_VOCAB)  # 46
+VOCAB_SIZE: int = len(_VOCAB)  # 49
+
+# Pre-Phase-3.4 vocabulary size, retained as a constant so that legacy
+# checkpoints can be loaded and extended without hard-coding 46 in
+# multiple places.
+LEGACY_VOCAB_SIZE: int = 46
 
 
 def encode(text: str) -> list[int]:

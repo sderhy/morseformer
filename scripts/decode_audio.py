@@ -74,6 +74,10 @@ def _rnnt_cfg_from_state(state: dict) -> RnntConfig:
     """Reconstruct RnntConfig from state-dict shapes (in case the saved
     config is empty / lossy)."""
     d_model = state["acoustic.head.weight"].shape[1]
+    # The output dim of the CTC head is the vocabulary size — read it
+    # off the state so that legacy 46-vocab checkpoints (Phase 3.0–3.3)
+    # keep loading after the tokenizer was extended to 49 in Phase 3.4.
+    vocab_size = state["acoustic.head.weight"].shape[0]
     d_pred = state["pred.embed.weight"].shape[1]
     d_joint = state["joint.enc_proj.weight"].shape[0]
     # Count Conformer blocks by scanning keys.
@@ -88,16 +92,24 @@ def _rnnt_cfg_from_state(state: dict) -> RnntConfig:
     if attn_w is not None and attn_w.shape[0] == 3 * d_model:
         n_heads = 4  # default — true value is not recoverable from shape
     return RnntConfig(
-        encoder=AcousticConfig(d_model=d_model, n_layers=n_layers, n_heads=n_heads),
+        encoder=AcousticConfig(
+            d_model=d_model, n_layers=n_layers, n_heads=n_heads,
+            vocab_size=vocab_size,
+        ),
         d_pred=d_pred,
         d_joint=d_joint,
+        vocab_size=vocab_size,
     )
 
 
 def _acoustic_cfg_from_state(state: dict) -> AcousticConfig:
     d_model = state["head.weight"].shape[1]
+    vocab_size = state["head.weight"].shape[0]
     block_ids = {int(k.split(".")[1]) for k in state if k.startswith("blocks.")}
-    return AcousticConfig(d_model=d_model, n_layers=len(block_ids) or 8, n_heads=4)
+    return AcousticConfig(
+        d_model=d_model, n_layers=len(block_ids) or 8, n_heads=4,
+        vocab_size=vocab_size,
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

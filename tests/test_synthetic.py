@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")
 
 import numpy as np  # noqa: E402
 
-from morseformer.core.tokenizer import BLANK_INDEX, decode  # noqa: E402
+from morseformer.core.tokenizer import BLANK_INDEX, VOCAB_SIZE, decode  # noqa: E402
 from morseformer.data.synthetic import (  # noqa: E402
     DatasetConfig,
     SyntheticCWDataset,
@@ -66,7 +66,7 @@ def test_tokens_are_in_valid_range() -> None:
         t = item["tokens"]
         # Non-blank, in [0, vocab_size) — the tokenizer never emits blank.
         assert (t >= 0).all()
-        assert (t < 46).all()
+        assert (t < VOCAB_SIZE).all()
         # encode() specifically never emits the blank token.
         assert (t != BLANK_INDEX).all()
 
@@ -212,7 +212,7 @@ def test_batch_runs_through_model_and_ctc() -> None:
     model = AcousticModel(mcfg).train()
     log_probs, lengths_out = model(batch["features"], lengths=batch["n_frames"])
     assert lengths_out is not None
-    assert log_probs.shape == (4, 750, 46)
+    assert log_probs.shape == (4, 750, VOCAB_SIZE)
 
     flat_targets = torch.cat([
         batch["tokens"][i, : batch["n_tokens"][i]] for i in range(4)
@@ -256,7 +256,7 @@ def test_phase_3_2_preset_runs_and_yields_valid_items() -> None:
             n_full += 1
             t = item["tokens"]
             assert (t > 0).all()
-            assert (t < 46).all()
+            assert (t < VOCAB_SIZE).all()
     # Both branches reachable.
     assert n_empty > 0, "no empty samples drawn from phase_3_2 preset"
     assert n_full > 0
@@ -299,3 +299,59 @@ def test_phase_3_2_empty_samples_have_empty_tokens() -> None:
         assert item["tokens"].numel() == 0
         # Audio shape unaffected.
         assert item["features"].shape == (3000, 1)
+
+
+# --------------------------------------------------------------------- #
+# Phase 3.6 preset + post-emission silence
+# --------------------------------------------------------------------- #
+
+
+def test_phase_3_6_preset_wires_new_knobs() -> None:
+    cfg = DatasetConfig.phase_3_6(seed=7)
+    assert cfg.empty_sample_probability == 0.20
+    assert cfg.post_emission_silence_probability == 0.10
+    assert cfg.text_mix.adversarial_fr == 0.06
+    assert cfg.operator_element_jitter_range == (0.0, 0.15)
+    assert cfg.operator_gap_jitter_range == (0.0, 0.25)
+
+
+def test_phase_3_6_preset_yields_valid_items() -> None:
+    cfg = DatasetConfig.phase_3_6(seed=9)
+    ds = SyntheticCWDataset(cfg)
+    it = iter(ds)
+    n_empty = n_full = 0
+    for _ in range(60):
+        item = next(it)
+        assert item["features"].shape == (3000, 1)
+        assert item["features"].dtype == torch.float32
+        if item["n_tokens"] == 0:
+            n_empty += 1
+        else:
+            n_full += 1
+            t = item["tokens"]
+            assert (t >= 0).all()
+            assert (t < VOCAB_SIZE).all()
+    assert n_empty > 0
+    assert n_full > 0
+
+
+def test_post_emission_silence_branch_returns_short_non_empty() -> None:
+    """Forcing post_emission_silence_probability=1.0 should yield only
+    short, non-empty utterances — the distinguishing feature of the
+    branch vs the empty-audio branch."""
+    cfg = DatasetConfig.phase_3_6(
+        seed=11,
+        empty_sample_probability=0.0,
+        post_emission_silence_probability=1.0,
+    )
+    ds = SyntheticCWDataset(cfg)
+    it = iter(ds)
+    for _ in range(20):
+        item = next(it)
+        assert item["features"].shape == (3000, 1)
+        # Real tokens (non-empty), and short by construction.
+        assert item["n_tokens"] > 0
+        lo, hi = cfg.post_emission_silence_text_chars
+        # Token count should be close to char count; allow some slack
+        # because the fallback short-text pool can include up to 5 chars.
+        assert item["n_tokens"] <= hi + 1

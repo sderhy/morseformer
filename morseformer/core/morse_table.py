@@ -24,6 +24,11 @@ MORSE_TABLE: dict[str, str] = {
     "&": ".-...",   ":": "---...",  ";": "-.-.-.",  "=": "-...-",
     "+": ".-.-.",   "-": "-....-",  "_": "..--.-",  '"': ".-..-.",
     "$": "...-..-", "@": ".--.-.",
+    # Phase 3.4: French CW characters. ITU additions standardised for
+    # accented Romance languages. ``upper()`` of "é" / "à" yields the
+    # precomposed forms below, so the keys match what the synthesiser
+    # actually receives after the dataset's text normalisation pass.
+    "É": "..-..",   "À": ".--.-",
 }
 
 # Prosigns: digraphs sent without inter-letter gap. Notation uses angle brackets,

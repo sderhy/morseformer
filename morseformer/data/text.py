@@ -22,15 +22,18 @@ Every generator takes a single ``np.random.Generator`` so seeding the
 RNG fully determines the output. The top-level ``sample_text`` picks a
 category according to ``DEFAULT_MIX`` and delegates.
 
-All outputs use only characters that the 46-token tokenizer accepts
-(``A-Z 0-9 space . , ? ! / = + -``). Out-of-vocab characters are
-silently dropped by both the tokenizer and the synthesiser, but we
-strive to produce clean in-vocab text anyway for clarity and
-reproducibility.
+All outputs use only characters that the 49-token tokenizer accepts
+(``A-Z 0-9 space . , ? ! / = + - É À '``). Out-of-vocab characters
+are silently dropped by both the tokenizer and the synthesiser, but
+we strive to produce clean in-vocab text anyway for clarity and
+reproducibility. The Phase 3.4 additions (É / À / apostrophe) are
+preserved by ``_normalize_prose`` so French prose retains its
+diacritics end-to-end.
 """
 
 from __future__ import annotations
 
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -428,7 +431,7 @@ def sample_english_words(rng: np.random.Generator) -> str:
 # --------------------------------------------------------------------- #
 
 # Punctuation tokens / prosigns sampled into the random stream. These
-# are all in the 46-token vocabulary (space and SK are space + S + K).
+# are all in the 49-token vocabulary (space and SK are space + S + K).
 _RANDOM_PUNCT: tuple[str, ...] = (",", "/", "?", "=", "-", "+", " SK")
 
 
@@ -514,13 +517,19 @@ _DE_TRANSLIT = str.maketrans({
     "Ä": "AE", "Ö": "OE", "Ü": "UE",
 })
 
-# Apostrophes / quote-marks become spaces — the tokenizer has no
-# apostrophe, and "DON'T" → "DON T" is closer to the spoken/CW intent
-# than "DONT".
-_QUOTE_CHARS = "'’‘ʼ`´\"“”«»‹›„‟"
+# Apostrophe-class characters that all collapse to the canonical ASCII
+# apostrophe (kept in the Phase 3.4 vocabulary). Curly quotes, prime,
+# backtick, acute as quote — every variant the corpus produces.
+_APOSTROPHE_CHARS = "'’‘ʼ`´"
 
-# Allowed output characters (matches the 46-token tokenizer).
-_PROSE_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,?!/=+-")
+# Wider quote-mark class that becomes whitespace (no semantic CW
+# equivalent — opening/closing quotes don't survive into Morse).
+_QUOTE_CHARS = "\"“”«»‹›„‟"
+
+# Allowed output characters (matches the 49-token tokenizer:
+# A-Z 0-9 punct + Phase 3.4 É À '). Lowercase é/à are pre-uppercased
+# in ``_normalize_prose`` before this set is consulted.
+_PROSE_ALLOWED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,?!/=+-ÉÀ'")
 
 # Cap how much text we keep per language to avoid loading 8 MB into
 # memory when only a fraction is sampled per epoch. 500 KB per language
@@ -535,16 +544,30 @@ _PROSE_CACHE: dict[str, str] | None = None
 
 
 def _normalize_prose(text: str, lang: str) -> str:
-    """Map a unicode prose chunk to the 46-token vocabulary.
+    """Map a unicode prose chunk to the 49-token vocabulary.
 
-    Steps: DE umlauts → ASCII, NFKD decomposition + strip combining
-    marks, quotes/apostrophes → space, em/en dashes → ``-``, uppercase,
-    drop unknown characters, collapse whitespace.
+    Phase 3.4 update: É / À / apostrophe are preserved end-to-end so
+    French prose retains the diacritics that the CW tokenizer can now
+    represent. Other accented characters (è / ê / ç / ñ / ü …) still
+    fall back to their ASCII base letter via NFKD.
+
+    Steps:
+        1. DE umlauts → ASCII digraphs (no NFKD path produces letters).
+        2. Apostrophe-class glyphs → ASCII ``'`` (kept).
+        3. Wider quote-mark class → space.
+        4. Em/en dashes → ``-``.
+        5. Uppercase the whole string. ``é`` → ``É`` and ``à`` → ``À``;
+           both are in ``_PROSE_ALLOWED`` so they pass through unchanged.
+        6. For any character still outside ``_PROSE_ALLOWED``, run a
+           per-character NFKD pass and strip combining marks. This keeps
+           the pre-3.4 behaviour for unsupported diacritics
+           (``ê`` → ``E``, ``ç`` → ``C``, ``ñ`` → ``N``).
+        7. Collapse whitespace.
     """
     if lang == "de":
         text = text.translate(_DE_TRANSLIT)
-    text = unicodedata.normalize("NFKD", text)
-    text = "".join(c for c in text if not unicodedata.combining(c))
+    for q in _APOSTROPHE_CHARS:
+        text = text.replace(q, "'")
     for q in _QUOTE_CHARS:
         text = text.replace(q, " ")
     for d in ("—", "–", "‒", "―"):
@@ -554,9 +577,19 @@ def _normalize_prose(text: str, lang: str) -> str:
     for c in text:
         if c in _PROSE_ALLOWED:
             out.append(c)
-        elif c.isspace():
+            continue
+        if c.isspace():
             out.append(" ")
-        # else: drop silently
+            continue
+        # Per-char NFKD fallback for diacritics we don't tokenise.
+        nf = unicodedata.normalize("NFKD", c)
+        nf = "".join(x for x in nf if not unicodedata.combining(x))
+        for nc in nf:
+            if nc in _PROSE_ALLOWED:
+                out.append(nc)
+            elif nc.isspace():
+                out.append(" ")
+            # else: drop silently
     return re.sub(r"\s+", " ", "".join(out)).strip()
 
 
@@ -607,6 +640,27 @@ def _snap_to_word_boundary(text: str, start: int, end: int, slack: int = 12) -> 
     return start, end
 
 
+def _sample_prose_from_lang(
+    rng: np.random.Generator,
+    lang: str,
+    min_chars: int,
+    max_chars: int,
+) -> str:
+    prose = _load_prose()
+    text = prose.get(lang, "")
+    if not text:
+        return sample_english_words(rng)
+    n = len(text)
+    target = int(rng.integers(min_chars, max_chars + 1))
+    if n <= target:
+        return text.strip()
+    start = int(rng.integers(0, n - target + 1))
+    end = start + target
+    start, end = _snap_to_word_boundary(text, start, end)
+    fragment = text[start:end].strip()
+    return fragment if fragment else text[start : start + target].strip()
+
+
 def sample_prose(
     rng: np.random.Generator,
     min_chars: int = 5,
@@ -627,8 +681,153 @@ def sample_prose(
         return sample_english_words(rng)
     langs = sorted(prose.keys())
     lang = langs[int(rng.integers(0, len(langs)))]
-    text = prose[lang]
+    return _sample_prose_from_lang(rng, lang, min_chars, max_chars)
+
+
+def sample_prose_fr(
+    rng: np.random.Generator,
+    min_chars: int = 5,
+    max_chars: int = 22,
+) -> str:
+    """Sample a French-only prose fragment.
+
+    Phase 3.4 introduces the É / À / apostrophe tokens. The natural
+    density of these characters in French prose is ~3 % per character,
+    so dedicating a slice of the text mix exclusively to FR gives the
+    model enough gradient on the new vocab rows during a short
+    fine-tune. Falls back to multilingual ``sample_prose`` (which itself
+    falls back to English words) if no FR text is loaded — keeps tests
+    that ship without the corpus from breaking.
+    """
+    return _sample_prose_from_lang(rng, "fr", min_chars, max_chars)
+
+
+# --------------------------------------------------------------------- #
+# FAV22 corpus + French adversarial sampler (Phase 3.6)
+# --------------------------------------------------------------------- #
+
+_FAV22_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data" / "corpus" / "fav22_blocks.jsonl"
+)
+
+_FAV22_CACHE: str | None = None
+
+# Patterns where the Phase 3.5 model emits false positives:
+#   * ``W + vowel`` (in-word or across an inter-word gap) — `WA` morse is
+#     ``.--.-`` which is exactly À when run together.
+#   * ``QU + vowel`` — short inter-element gap on the U after the Q
+#     produces patterns the model maps to É.
+# Pre-compiled at import; matches both inside words and around word
+# boundaries (e.g. ``WAS A`` or ``L'EAU`` for QU/U+vowel).
+_ADVERSARIAL_FR_PATTERNS = (
+    re.compile(r"W[ \-]?[AEIOUYÀÉ]"),
+    re.compile(r"QU[AEIOUYÀÉ]"),
+)
+
+
+def _load_fav22_clair() -> str:
+    """Lazy-load the clair FAV22 blocks as a single normalised stream.
+
+    Only ``mode=clair`` blocks are kept (codé blocks are random 5-letter
+    groups already covered by ``sample_random_chars``). Blocks are
+    joined with double spaces so position-based extraction never
+    straddles two unrelated lessons.
+    """
+    global _FAV22_CACHE
+    if _FAV22_CACHE is not None:
+        return _FAV22_CACHE
+    if not _FAV22_PATH.exists():
+        _FAV22_CACHE = ""
+        return _FAV22_CACHE
+    chunks: list[str] = []
+    with _FAV22_PATH.open(encoding="utf-8") as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("mode") != "clair":
+                continue
+            text = rec.get("normalized_text", "").strip()
+            if text:
+                chunks.append(text)
+    _FAV22_CACHE = "  ".join(chunks)
+    return _FAV22_CACHE
+
+
+def _adversarial_corpus_text() -> str:
+    """Concatenated FR-adversarial corpus: FR prose + FAV22 clair."""
+    fr = _load_prose().get("fr", "")
+    fav = _load_fav22_clair()
+    if fr and fav:
+        return fr + "  " + fav
+    return fr or fav
+
+
+_ADVERSARIAL_FR_POSITIONS_CACHE: list[int] | None = None
+
+
+def _adversarial_fr_positions() -> tuple[str, list[int]]:
+    """Return the FR-adversarial corpus and a list of match start
+    positions for the target patterns. Cached after first call."""
+    global _ADVERSARIAL_FR_POSITIONS_CACHE
+    text = _adversarial_corpus_text()
+    if _ADVERSARIAL_FR_POSITIONS_CACHE is not None:
+        return text, _ADVERSARIAL_FR_POSITIONS_CACHE
+    positions: list[int] = []
+    if text:
+        for pat in _ADVERSARIAL_FR_PATTERNS:
+            for m in pat.finditer(text):
+                positions.append(m.start())
+        positions.sort()
+    _ADVERSARIAL_FR_POSITIONS_CACHE = positions
+    return text, positions
+
+
+def sample_french_adversarial(
+    rng: np.random.Generator,
+    min_chars: int = 6,
+    max_chars: int = 24,
+) -> str:
+    """Hybrid sampler that exposes the model to ``W + vowel`` and
+    ``QU + vowel`` patterns at the rate it sees them on real French
+    traffic — orders of magnitude above their natural prose density.
+
+    Two modes (50/50):
+
+    * **synthetic / positional**: pick a random ``W·vowel`` or
+      ``QU·vowel`` match in the FR-adversarial corpus (FR prose + FAV22
+      clair) and extract a window of 6-24 chars centred on it. The
+      window is snapped to word boundaries so the fragment reads
+      naturally.
+    * **corpus**: draw a longer fragment of FR prose + FAV22 clair
+      *without* requiring a target bigram, so the model still sees
+      authentic FR distribution around the adversarial samples and does
+      not over-fit to the specific patterns.
+
+    Falls back to :func:`sample_prose_fr` if the corpus is unavailable
+    or has no matches (CI without ``data/`` dir).
+    """
+    text, positions = _adversarial_fr_positions()
+    if not text or not positions:
+        return sample_prose_fr(rng, min_chars=min_chars, max_chars=max_chars)
     n = len(text)
+    if rng.random() < 0.5:
+        # Positional / adversarial draw.
+        pos = positions[int(rng.integers(0, len(positions)))]
+        target = int(rng.integers(min_chars, max_chars + 1))
+        half = target // 2
+        start = max(0, pos - half)
+        end = min(n, start + target)
+        start, end = _snap_to_word_boundary(text, start, end)
+        fragment = text[start:end].strip()
+        return (
+            fragment
+            if fragment
+            else text[start : start + target].strip()
+        )
+    # Corpus draw — uniform window, no positional constraint.
     target = int(rng.integers(min_chars, max_chars + 1))
     if n <= target:
         return text.strip()
@@ -666,12 +865,15 @@ class TextMix:
     words: float
     random: float = 0.0
     prose: float = 0.0
+    prose_fr: float = 0.0
+    adversarial_fr: float = 0.0
 
     def as_array(self) -> np.ndarray:
         w = np.array(
             [
                 self.callsign, self.qcode, self.qso,
-                self.numeric, self.words, self.random, self.prose,
+                self.numeric, self.words, self.random,
+                self.prose, self.prose_fr, self.adversarial_fr,
             ],
             dtype=np.float64,
         )
@@ -718,7 +920,48 @@ PHASE_3_3_MIX = TextMix(
 )
 
 
-_CATEGORIES = ("callsign", "qcode", "qso", "numeric", "words", "random", "prose")
+# Phase 3.4: tokenizer extended to 49 (É / À / apostrophe). The new tokens
+# only appear in French prose (and incidentally in apostrophised English),
+# so we double the prose budget vs Phase 3.3 and split it as 1/3
+# multilingual + 2/3 French-only (``prose_fr``). At ~3 % accent density in
+# the FR corpus this gives the model ≈ 0.5 % of training characters per
+# new token — enough to converge fresh-init head/embedding rows in a
+# Phase-3.3-length fine-tune without starving the other categories.
+PHASE_3_4_MIX = TextMix(
+    callsign=0.10,
+    qcode=0.12,
+    qso=0.20,
+    numeric=0.12,
+    words=0.04,
+    random=0.18,
+    prose=0.08,
+    prose_fr=0.16,
+)
+
+
+# Phase 3.6: shave 6 % off the existing FR / random / words slices to
+# fund a 6 % adversarial-FR stream. The stream concentrates training
+# weight on the exact patterns where Phase 3.5 still false-positives in
+# live (W + vowel → À, QU + vowel → É) without changing the overall
+# language balance — we simply trade a fraction of generic FR prose for
+# adversarial FR prose drawn from the same corpus.
+PHASE_3_6_MIX = TextMix(
+    callsign=0.10,
+    qcode=0.12,
+    qso=0.20,
+    numeric=0.12,
+    words=0.03,
+    random=0.16,
+    prose=0.08,
+    prose_fr=0.13,
+    adversarial_fr=0.06,
+)
+
+
+_CATEGORIES = (
+    "callsign", "qcode", "qso", "numeric", "words",
+    "random", "prose", "prose_fr", "adversarial_fr",
+)
 _SAMPLERS = {
     "callsign": sample_callsign,
     "qcode": sample_qcode_abbrev,
@@ -727,6 +970,8 @@ _SAMPLERS = {
     "words": sample_english_words,
     "random": sample_random_chars,
     "prose": sample_prose,
+    "prose_fr": sample_prose_fr,
+    "adversarial_fr": sample_french_adversarial,
 }
 
 

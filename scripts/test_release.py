@@ -49,20 +49,23 @@ from morseformer.models.rnnt import RnntConfig, RnntModel
 
 
 # CER thresholds the checkpoint must stay within on each SNR bin.
-# Re-calibrated for v0.3.0 (Phase 3.3 best.pt) on the AWGN guard
-# ladder. The −10 dB threshold is intentionally generous: v0.2/v0.3
-# trade some bare-AWGN performance at very low SNR for stronger
-# anti-hallucination behaviour, and the guard ladder does not include
-# the QSB/QRN/QRM impairments where v0.2/v0.3 actually win.
+# Re-calibrated for v0.4.0 (Phase 3.5 best.pt) on the AWGN guard
+# ladder. The −10 dB threshold is intentionally generous: v0.2 onward
+# trades worst-case pure-AWGN performance for stronger anti-
+# hallucination, realistic-channel CER, and (Phase 3.5) wider operator
+# jitter. The guard ladder does not include QSB/QRN/QRM where v0.2+
+# actually win.
 #
 #   +20 dB : observed 0.0000 — threshold 0.02 is effectively "no errors"
-#     0 dB : observed 0.0099 — threshold 0.05 has slack for n = 25
-#   −10 dB : observed 0.8826 — threshold 0.93 catches a real regression
-#                             without flaking on n = 25 sampling noise
+#     0 dB : observed 0.0000 — threshold 0.05 has slack for n = 25
+#   −10 dB : observed 0.9476 (Phase 3.5) vs 0.8826 (Phase 3.3) — threshold
+#                             0.97 absorbs the v0.4 widened-jitter
+#                             trade-off documented in
+#                             project_phase3_5_result.md
 _THRESHOLDS: dict[float, float] = {
     20.0: 0.02,
     0.0: 0.05,
-    -10.0: 0.93,
+    -10.0: 0.97,
 }
 
 # Small and fast: 5 samples/wpm × 5 wpm × 3 snr = 75 samples.
@@ -72,6 +75,10 @@ _N_PER_WPM: int = 5
 
 def _candidate_paths() -> tuple[Path, ...]:
     return (
+        Path("release/rnnt_phase3_5.pt"),
+        Path("checkpoints/phase3_5/best_rnnt.pt"),
+        Path("release/rnnt_phase3_3.pt"),
+        Path("checkpoints/phase3_3/best_rnnt.pt"),
         Path("release/rnnt_phase3_0.pt"),
         Path("checkpoints/phase3_0/best_rnnt.pt"),
     )
@@ -90,8 +97,8 @@ def _resolve_ckpt(explicit: Path | None) -> Path:
         + "\n  - ".join(str(p) for p in _candidate_paths())
         + "\nDownload the release weights with:\n"
         "  pip install huggingface_hub\n"
-        "  hf download sderhy/morseformer rnnt_phase3_0.pt "
-        "--local-dir checkpoints/phase3_0"
+        "  hf download sderhy/morseformer rnnt_phase3_5.pt "
+        "--local-dir checkpoints/phase3_5"
     )
 
 
@@ -99,10 +106,12 @@ def _load_rnnt(path: Path, device: torch.device) -> RnntModel:
     ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
     cfg = ckpt["config"]
     enc = cfg["model"]["encoder"]
+    ckpt_vocab = cfg["model"].get("vocab_size")
     encoder_cfg = AcousticConfig(
         d_model=enc["d_model"], n_heads=enc["n_heads"], n_layers=enc["n_layers"],
         ff_expansion=enc["ff_expansion"], conv_kernel=enc["conv_kernel"],
         dropout=enc["dropout"],
+        **({"vocab_size": ckpt_vocab} if ckpt_vocab is not None else {}),
     )
     rnnt_cfg = RnntConfig(
         encoder=encoder_cfg,
@@ -110,6 +119,7 @@ def _load_rnnt(path: Path, device: torch.device) -> RnntModel:
         pred_lstm_layers=cfg["model"]["pred_lstm_layers"],
         d_joint=cfg["model"]["d_joint"],
         dropout=cfg["model"]["dropout"],
+        **({"vocab_size": ckpt_vocab} if ckpt_vocab is not None else {}),
     )
     model = RnntModel(rnnt_cfg).to(device)
     state = dict(ckpt["model"])

@@ -36,6 +36,13 @@ data/real/
 # Phase 3.3 multilingual prose corpus (regenerable via data/corpus/fetch.py)
 data/corpus/prose.txt
 
+# Phase 3.5+ FAV22-decoded artefacts (regenerable via scripts/decode_fav22.py
+# + scripts/align_fav22.py from a recorded fav22*.wav). The reference
+# fav22_blocks.jsonl text JSONL itself IS tracked — it's the
+# parser output of the public PDF.
+data/corpus/fav22_*_decoded.jsonl
+data/corpus/fav22_*_aligned.jsonl
+
 # Training artefacts
 runs/
 wandb/

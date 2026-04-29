@@ -16,9 +16,29 @@ from morseformer.core.tokenizer import (
 
 
 def test_vocab_shape() -> None:
-    assert VOCAB_SIZE == 46
+    # Phase 3.4: 46 → 49 (É / À / apostrophe appended).
+    assert VOCAB_SIZE == 49
     assert len(INDEX_TO_TOKEN) == VOCAB_SIZE
     assert len(TOKEN_TO_INDEX) == VOCAB_SIZE
+
+
+def test_phase_3_4_tokens_present() -> None:
+    # Phase 3.4 additions must occupy the tail of the vocabulary so that
+    # legacy 46-vocab checkpoints can be extended by appending fresh
+    # rows without rewriting the first 46 indices. See
+    # scripts/extend_tokenizer_46_to_49.py.
+    assert INDEX_TO_TOKEN[46] == "É"
+    assert INDEX_TO_TOKEN[47] == "À"
+    assert INDEX_TO_TOKEN[48] == "'"
+
+
+def test_encode_french_accents_roundtrip() -> None:
+    # Lowercase é / à upper-case to É / À and round-trip through the
+    # tokenizer; the apostrophe stays as-is.
+    text = "L'AMI DE L'ÉTÉ À NICE"
+    assert decode(encode(text)) == text
+    # Lowercase variant normalises to the same token sequence.
+    assert encode("l'ami de l'été à nice") == encode(text)
 
 
 def test_blank_and_space_positions() -> None:

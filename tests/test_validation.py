@@ -6,7 +6,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from morseformer.core.tokenizer import decode  # noqa: E402
+from morseformer.core.tokenizer import VOCAB_SIZE, decode  # noqa: E402
 from morseformer.data.synthetic import DatasetConfig, collate  # noqa: E402
 from morseformer.data.validation import (  # noqa: E402
     ValidationConfig,
@@ -135,5 +135,5 @@ def test_end_to_end_validation_batch() -> None:
     with torch.no_grad():
         log_probs, lengths_out = model(batch["features"],
                                        lengths=batch["n_frames"])
-    assert log_probs.shape == (4, 750, 46)
+    assert log_probs.shape == (4, 750, VOCAB_SIZE)
     assert lengths_out.tolist() == [750] * 4

@@ -59,10 +59,12 @@ def _load_rnnt(path: Path, device: torch.device) -> RnntModel:
     ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
     cfg = ckpt["config"]
     enc = cfg["model"]["encoder"]
+    ckpt_vocab = cfg["model"].get("vocab_size")
     encoder_cfg = AcousticConfig(
         d_model=enc["d_model"], n_heads=enc["n_heads"], n_layers=enc["n_layers"],
         ff_expansion=enc["ff_expansion"], conv_kernel=enc["conv_kernel"],
         dropout=enc["dropout"],
+        **({"vocab_size": ckpt_vocab} if ckpt_vocab is not None else {}),
     )
     rnnt_cfg = RnntConfig(
         encoder=encoder_cfg,
@@ -70,6 +72,7 @@ def _load_rnnt(path: Path, device: torch.device) -> RnntModel:
         pred_lstm_layers=cfg["model"]["pred_lstm_layers"],
         d_joint=cfg["model"]["d_joint"],
         dropout=cfg["model"]["dropout"],
+        **({"vocab_size": ckpt_vocab} if ckpt_vocab is not None else {}),
     )
     model = RnntModel(rnnt_cfg).to(device)
     state = dict(ckpt["model"])

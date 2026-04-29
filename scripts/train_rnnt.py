@@ -65,7 +65,8 @@ def build_parser() -> argparse.ArgumentParser:
     # Curriculum
     p.add_argument("--curriculum",
                    choices=("phase2_0", "phase2_1", "phase2_2",
-                            "phase3_1", "phase3_2", "phase3_3"),
+                            "phase3_1", "phase3_2", "phase3_3",
+                            "phase3_4", "phase3_5", "phase3_6"),
                    default="phase2_1",
                    help="Dataset preset. phase2_1 = Phase 3.0 clean "
                         "ablation. phase3_1 = realistic HF channel. "
@@ -74,7 +75,21 @@ def build_parser() -> argparse.ArgumentParser:
                         "(anti-hallucination curriculum). phase3_3 = "
                         "phase3_2 channel + 12 %% multilingual prose "
                         "(FR/DE/ES/EN, normalised to ASCII) to fight "
-                        "the English-prior bias seen on real French QSOs.")
+                        "the English-prior bias seen on real French QSOs. "
+                        "phase3_4 = phase3_3 channel + 24 %% prose "
+                        "(8 %% multilingual + 16 %% FR-only) to train "
+                        "the new É / À / apostrophe tokens added in "
+                        "the 49-vocab tokenizer. "
+                        "phase3_5 = phase3_4 mix with widened operator "
+                        "jitter (0-0.15 element, 0-0.25 gap) to fix "
+                        "the morning-keying É / À false positives "
+                        "observed in the post-Phase-3.4 live test. "
+                        "phase3_6 = phase3_5 + 6 %% adversarial-FR "
+                        "(WA/WI/WO/QU + vowel patterns from FR prose + "
+                        "FAV22-clair) + 10 %% post-emission-silence "
+                        "samples to close the residual É / À false "
+                        "positives observed at the end of the Phase 3.5 "
+                        "live evaluation.")
     # SNR-laddered validation
     p.add_argument("--validation-snrs", default="",
                    help="Comma-separated SNR list for SNR-ladder validation. "
@@ -122,7 +137,13 @@ def main(argv: list[str] | None = None) -> int:
         d_joint=args.d_joint,
     )
 
-    if args.curriculum == "phase3_3":
+    if args.curriculum == "phase3_6":
+        dataset_cfg = DatasetConfig.phase_3_6(seed=args.seed)
+    elif args.curriculum == "phase3_5":
+        dataset_cfg = DatasetConfig.phase_3_5(seed=args.seed)
+    elif args.curriculum == "phase3_4":
+        dataset_cfg = DatasetConfig.phase_3_4(seed=args.seed)
+    elif args.curriculum == "phase3_3":
         dataset_cfg = DatasetConfig.phase_3_3(seed=args.seed)
     elif args.curriculum == "phase3_2":
         dataset_cfg = DatasetConfig.phase_3_2(seed=args.seed)

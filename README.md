@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.3.0](https://img.shields.io/badge/release-v0.3.0-brightgreen.svg)](#release-v030)
+[![Release: v0.4.0](https://img.shields.io/badge/release-v0.4.0-brightgreen.svg)](#release-v040)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.3.0 release** ships a 4.1 M-parameter acoustic model trained with an anti-hallucination curriculum and a multilingual (FR/DE/ES/EN) prose mix: it cuts the realistic-channel CER from 8.38 % (v0.2) to **7.49 %**, partly recovers the AWGN low-SNR regression v0.2 had introduced, fixes a streaming-decoder bug that swallowed inter-word spaces at window boundaries, and decodes recognisable French / English prose word-by-word in live tests. A 4.8 M-parameter character LM and LM-fusion decoders (shallow + ILME) are bundled for research.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.4.0 release** ships a 4.1 M-parameter, **49-token** acoustic model that adds native French support: É, À and apostrophe are now first-class output tokens. On the French accent-rich bench it reaches **6.46 % CER** with **97.8 % À precision and 98.4 % apostrophe precision**, and live-decodes Nerval / Verlaine / FAV22 verses with proper diacritics where v0.3 collapsed apostrophes to `1`. A 4.8 M-parameter character LM and LM-fusion decoders (shallow + ILME) are bundled for research.
 
 ## Why
 
@@ -21,18 +21,18 @@ cd morseformer
 pip install -e ".[dev,audio]"
 pytest -q
 
-# download the v0.3 release checkpoint (4.1 M params, ~33 MB)
+# download the v0.4 release checkpoint (4.1 M params, ~33 MB)
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase3_3.pt \
-    --local-dir checkpoints/phase3_3
+hf download sderhy/morseformer rnnt_phase3_5.pt \
+    --local-dir checkpoints/phase3_5
 
 # decode a .wav file (any length — audio is chunked into 6 s windows,
 # the length the model was trained on)
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase3_3/rnnt_phase3_3.pt
+    --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt
 
 # OR: real-time streaming on a live receiver (PulseAudio input)
-python -m scripts.decode_live --ckpt checkpoints/phase3_3/rnnt_phase3_3.pt
+python -m scripts.decode_live --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -41,6 +41,35 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
 ```
+
+## Release v0.4.0
+
+49-vocab tokenizer (adds **É / À / apostrophe**), Phase 3.4 French-rich prose curriculum, Phase 3.5 widened operator-jitter for live keying robustness. Five artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
+
+| file | params | vocab | description |
+|---|---|---|---|
+| `rnnt_phase3_5.pt` | 4.13 M | **49** | **v0.4 acoustic model** — Phase 3.4 (FR prose + extended É/À/' vocab) + Phase 3.5 (widened jitter). Recommended. |
+| `rnnt_phase3_3.pt` | 4.13 M | 46 | v0.3 acoustic model — multilingual ASCII-normalised prose. |
+| `rnnt_phase3_2.pt` | 4.13 M | 46 | v0.2 acoustic model — anti-hallucination curriculum. |
+| `rnnt_phase3_0.pt` | 4.13 M | 46 | v0.1 acoustic model — AWGN-only training. |
+| `lm_phase4_0.pt`   | 4.76 M | 46 | Character-level LM (research, unchanged from v0.1). |
+
+Headline numbers on the French accent-rich bench (300 FR-prose samples sampled around É / À / apostrophe positions, evaluated through `scripts/eval_phase_3_4_french.py`):
+
+```
+  Metric                              v0.3 (46-vocab)   v0.4 (Phase 3.5)
+  ----------------------------------------------------------------------
+  Overall French CER                  n/a (no tokens)        6.46 %
+  CER at clean / +20 / +10 / +5 dB    n/a                    0.00 %
+  CER at 0 dB                         n/a                    4.99 %
+  É  precision / recall               0 % / 0 %        100.0 % / 91.6 %
+  À  precision / recall               0 % / 0 %         97.8 % / 95.7 %
+  '  precision / recall               0 % / 0 %         98.4 % / 98.4 %
+```
+
+Live-validated on 2026-04-29 with an IC-7300 streaming decoder on FAV22 clair + Nerval *El Desdichado* + Poe *Annabel Lee*. Decoded `L'HEURE`, `L'AUTOMNE`, `MA SEULE ÉTOILE EST MORTE`, `À LA TOUR ABOLIE` with proper diacritics. No false-positive É / À in English passages. Residuals: occasional `WA → À` confusion at fast keying (the `.--.-` ambiguity) and recall on É below precision.
+
+Realistic-channel SNR ladder (Phase 3.1 channel) is at parity with v0.3 — the curriculum changes only affect text mix and operator jitter. See [MODEL_CARD.md](MODEL_CARD.md) for the full v0.3 ladder retained as reference.
 
 ## Release v0.3.0
 
