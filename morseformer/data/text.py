@@ -507,6 +507,146 @@ def sample_random_chars(rng: np.random.Generator) -> str:
 
 
 # --------------------------------------------------------------------- #
+# Phase 4.0 — pure-acoustic random chars
+# --------------------------------------------------------------------- #
+#
+# Phase 4.0 retraining drops all prose / Q-codes / callsigns from the
+# acoustic curriculum and relies on this sampler exclusively. Rationale:
+# the post-3.5 series (3.6/3.7/3.8) showed that any prose redistribution
+# trades one sub-domain for another (catastrophic forgetting under fixed
+# capacity). The Phase 4.0 architectural decision splits responsibilities
+# — acoustic = char-level only, language structure = LM at decode time
+# (Phase 5.0 fusion). The sampler must therefore expose the model to a
+# distribution with **no linguistic prior whatsoever**, while still
+# preserving the 49-token vocabulary acquired in Phase 3.5 (including
+# É / À / apostrophe at 92–100 % per-token precision).
+#
+# Four modes (planned mix 50/25/15/10):
+#
+#   * mode_a (50 %): 5–25 chars, mix letters + digits, no punct
+#   * mode_b (25 %): 5–15 chars + 1–2 punctuations dispersed; ~10 % of
+#                    mode_b samples force-include one accent token
+#                    (É / À / ') so these tokens see ~2.5 % of training
+#                    samples — well above their natural-ASCII rate of
+#                    0 % and enough to defend against catastrophic
+#                    forgetting under 30k bootstrap steps.
+#   * mode_c (15 %): 3–8 chars all-digit (RST / dates / freqs out of
+#                    context). Concentrates training on the digit
+#                    tokens, which are sparse in the 3.x prose corpora.
+#   * mode_d (10 %): cipher-style 5-letter groups (5+5 or 5+5+5).
+#                    Mimics the canonical contest / training-tape
+#                    formats and exercises inter-group spaces.
+
+# Phase 4.0 punctuation pool. Excludes the multi-char " SK" prosign that
+# the 3.x sampler used: in a no-prior curriculum we want each token to
+# fire on its own, not glued into a prosign.
+_RANDOM_PUNCT_PHASE4: tuple[str, ...] = (".", ",", "?", "!", "/", "=", "+", "-")
+_ACCENT_TOKENS: tuple[str, ...] = ("É", "À", "'")
+_PHASE_4_MODE_PROBS: tuple[float, ...] = (0.50, 0.25, 0.15, 0.10)
+# Probability that a mode_b sample is force-rewritten to contain at
+# least one accent token. With mode_b at 25 % of the mix, this gives
+# accents ≈ 2.5 % of training characters at the sample level.
+_PHASE_4_ACCENT_PROB: float = 0.10
+
+
+def _phase4_letters_or_digits(rng: np.random.Generator, length: int,
+                               digit_prob: float = 0.30) -> list[str]:
+    out: list[str] = []
+    for _ in range(length):
+        if rng.random() < digit_prob:
+            out.append(str(int(rng.integers(0, 10))))
+        else:
+            out.append(chr(ord("A") + int(rng.integers(0, 26))))
+    return out
+
+
+def sample_random_chars_phase4(
+    rng: np.random.Generator,
+    max_chars: int | None = None,
+) -> str:
+    """Phase 4.0 random-char sampler — 4 modes (a/b/c/d) with accent boost.
+
+    See module-level comment above for motivation and mode definitions.
+    Returned text always passes ``encode()`` cleanly and never contains
+    the SK prosign (single tokens only).
+
+    ``max_chars`` (when provided) clips every per-mode length range to
+    ``[1, max_chars]`` so the sampler can be driven from a wpm-derived
+    budget at synthesis time. mode_d (5+5 cipher groups) requires at
+    least 11 characters; if the cap is below that, the call re-rolls
+    to one of the other three modes. With no cap (the default), the
+    sampler returns its full distribution — useful for unit tests and
+    interactive inspection.
+    """
+    if max_chars is not None and max_chars < 1:
+        # Pathological budget — emit a single letter so the caller still
+        # gets a non-empty token sequence.
+        return chr(ord("A") + int(rng.integers(0, 26)))
+
+    # Re-roll the mode if the chosen one would require more chars than
+    # the cap allows. Bound the loop to avoid pathological infinite
+    # re-roll on tiny caps (only mode_d is gated; mode_a/b/c always
+    # have valid sub-distributions for max_chars >= 1).
+    for _ in range(8):
+        mode_idx = int(rng.choice(4, p=_PHASE_4_MODE_PROBS))
+        if mode_idx == 3 and max_chars is not None and max_chars < 11:
+            continue
+        break
+    else:
+        mode_idx = 0  # safe fallback
+
+    if mode_idx == 0:  # mode_a
+        hi = 26 if max_chars is None else min(26, max_chars + 1)
+        lo = min(5, hi - 1) if hi > 1 else 1
+        length = int(rng.integers(lo, hi))
+        return "".join(_phase4_letters_or_digits(rng, length))
+
+    if mode_idx == 1:  # mode_b
+        # Reserve 1 slot for punct (and another for accent if it fires)
+        # so the final string still respects ``max_chars``.
+        accent_will_fire = rng.random() < _PHASE_4_ACCENT_PROB
+        n_punct = int(rng.integers(1, 3))                  # 1 or 2
+        reserve = n_punct + (1 if accent_will_fire else 0)
+        if max_chars is None:
+            base_hi = 16                                    # 5..15
+            base_lo = 5
+        else:
+            base_hi = max(2, max_chars - reserve + 1)       # exclusive
+            base_lo = min(3, base_hi - 1)
+        base_len = int(rng.integers(base_lo, base_hi))
+        chars = _phase4_letters_or_digits(rng, base_len)
+        for _ in range(n_punct):
+            punct = _RANDOM_PUNCT_PHASE4[
+                int(rng.integers(0, len(_RANDOM_PUNCT_PHASE4)))
+            ]
+            pos = int(rng.integers(0, len(chars) + 1))
+            chars.insert(pos, punct)
+        if accent_will_fire:
+            accent = _ACCENT_TOKENS[
+                int(rng.integers(0, len(_ACCENT_TOKENS)))
+            ]
+            pos = int(rng.integers(0, len(chars) + 1))
+            chars.insert(pos, accent)
+        return "".join(chars)
+
+    if mode_idx == 2:  # mode_c — all digits
+        hi = 9 if max_chars is None else min(9, max_chars + 1)
+        lo = min(3, hi - 1) if hi > 1 else 1
+        length = int(rng.integers(lo, hi))
+        return _random_digits(rng, length)
+
+    # mode_d — 5-char groups, 2 or 3 of them. Already gated above so
+    # max_chars >= 11 if we reach here.
+    if max_chars is None or max_chars >= 17:
+        n_groups = int(rng.integers(2, 4))                  # 2 or 3
+    else:
+        n_groups = 2                                        # exactly 11 chars
+    groups = ["".join(_phase4_letters_or_digits(rng, 5))
+              for _ in range(n_groups)]
+    return " ".join(groups)
+
+
+# --------------------------------------------------------------------- #
 # Multilingual prose (Phase 3.3)
 # --------------------------------------------------------------------- #
 
@@ -867,6 +1007,26 @@ class TextMix:
     prose: float = 0.0
     prose_fr: float = 0.0
     adversarial_fr: float = 0.0
+    # Phase 4.0 — the new pure-acoustic random-char distribution
+    # (`sample_random_chars_phase4`). Distinct from `random` so existing
+    # 3.x presets stay byte-for-byte equivalent. Phase 4.0 sets this to
+    # 1.0 and zeroes everything else.
+    random_phase4: float = 0.0
+
+    def is_random_phase4_only(self) -> bool:
+        """True iff ``random_phase4`` is the sole non-zero category.
+
+        Used by the synthesis pipeline to dispatch into the wpm-aware
+        fast path that avoids the Q-code fallback (which would
+        contaminate the no-prior curriculum).
+        """
+        return (
+            self.random_phase4 > 0
+            and self.callsign == 0 and self.qcode == 0 and self.qso == 0
+            and self.numeric == 0 and self.words == 0 and self.random == 0
+            and self.prose == 0 and self.prose_fr == 0
+            and self.adversarial_fr == 0
+        )
 
     def as_array(self) -> np.ndarray:
         w = np.array(
@@ -874,6 +1034,7 @@ class TextMix:
                 self.callsign, self.qcode, self.qso,
                 self.numeric, self.words, self.random,
                 self.prose, self.prose_fr, self.adversarial_fr,
+                self.random_phase4,
             ],
             dtype=np.float64,
         )
@@ -958,9 +1119,26 @@ PHASE_3_6_MIX = TextMix(
 )
 
 
+# Phase 4.0: 100 % random_phase4. No prose, no callsigns, no Q-codes, no
+# linguistic structure. The acoustic model is retrained as a pure
+# character recognizer; language structure is restored at decode time
+# via beam search + LM fusion (Phase 5.0). All weights other than
+# `random_phase4` are zero — the architectural pivot is the entire
+# point of the phase.
+PHASE_4_0_MIX = TextMix(
+    callsign=0.0,
+    qcode=0.0,
+    qso=0.0,
+    numeric=0.0,
+    words=0.0,
+    random_phase4=1.0,
+)
+
+
 _CATEGORIES = (
     "callsign", "qcode", "qso", "numeric", "words",
     "random", "prose", "prose_fr", "adversarial_fr",
+    "random_phase4",
 )
 _SAMPLERS = {
     "callsign": sample_callsign,
@@ -972,6 +1150,7 @@ _SAMPLERS = {
     "prose": sample_prose,
     "prose_fr": sample_prose_fr,
     "adversarial_fr": sample_french_adversarial,
+    "random_phase4": sample_random_chars_phase4,
 }
 
 

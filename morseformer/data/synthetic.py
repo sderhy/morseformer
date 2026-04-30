@@ -41,7 +41,9 @@ from morseformer.data.text import (
     PHASE_3_3_MIX,
     PHASE_3_4_MIX,
     PHASE_3_6_MIX,
+    PHASE_4_0_MIX,
     TextMix,
+    sample_random_chars_phase4,
     sample_text,
 )
 from morseformer.features import FrontendConfig, extract_features
@@ -76,6 +78,24 @@ def estimate_cw_duration_s(text: str, wpm: float) -> float:
             total_units += sum(1.0 if e == "." else 3.0 for e in code)
             total_units += max(0, len(code) - 1)
     return total_units * u + 0.05
+
+
+def _random_phase4_max_chars(wpm: float, budget_s: float) -> int:
+    """Largest N such that an N-char random_phase4 sequence is likely
+    to fit in ``budget_s`` of audio at ``wpm`` keying speed.
+
+    Uses the PARIS-standard average of ~10 dot-units per character
+    (including the inter-character gap), with an 11-dot conservative
+    factor to leave headroom for operator-jitter slip in 4.0b/4.0c
+    and for the heavier punctuation tokens in mode_b (',' / '.' /
+    '?' / '!' all clock in around 9–12 dot-units). The 50 ms keying
+    tail matches :func:`estimate_cw_duration_s`. Returns at least 1
+    so the sampler always has work to do — the caller relies on this
+    invariant to skip its retry loop entirely.
+    """
+    u = unit_seconds(wpm)
+    available_dots = max(0.0, (budget_s - 0.05) / u)
+    return max(1, int(available_dots // 11.0))
 
 
 def _FALLBACK_SHORT_TEXTS() -> tuple[str, ...]:
@@ -193,6 +213,27 @@ class DatasetConfig:
     qrm_probability: float = 0.0
     qrm_offset_range_hz: tuple[float, float] = (-300.0, 300.0)
     qrm_rel_db_range: tuple[float, float] = (-20.0, -8.0)
+
+    # Phase 4.0 — quiet-zone padding before / after the rendered CW.
+    # When the CW is positioned at t=0 of the buffer (3.x behaviour) the
+    # model never sees "silence-then-CW" in training and is prone to
+    # hallucinating phantom characters at chunk boundaries in streaming
+    # decode (the pseudo-`4` on silence observed live at v0.4.0).
+    #
+    # With these ranges set, every sample inserts a random pre-CW
+    # silence ``U(pre_quiet_zone_range_s)`` and reserves a minimum
+    # post-CW silence ``post_quiet_zone_min_s`` (the rest of the buffer
+    # after the CW gets the trailing silence "for free" via padding).
+    # The whole buffer — including the quiet zones — is then run through
+    # the channel pipeline, so the quiet zones inherit AWGN, QSB, QRN
+    # and (with non-zero ``qrm_probability``) co-channel CW. Label is
+    # the CW tokens only; the model must learn that the channel
+    # artefacts in the quiet zone are not characters. This is the
+    # interpretation-(C) "noisy quiet zone" of the Phase 4.0 plan.
+    #
+    # Defaults keep zero-length zones so the 3.x presets are unchanged.
+    pre_quiet_zone_range_s: tuple[float, float] = (0.0, 0.0)
+    post_quiet_zone_min_s: float = 0.0
 
     seed: int = 0
     max_text_retries: int = 5
@@ -332,6 +373,122 @@ class DatasetConfig:
         )
         base.update(overrides)
         return cls(**base)
+
+    @classmethod
+    def _phase_4_0_base(cls, **overrides) -> "DatasetConfig":
+        """Common knobs for the Phase 4.0 sub-curricula.
+
+        Phase 4.0 retrains the acoustic model from the Phase 3.5
+        checkpoint as a pure character recognizer:
+
+        * 100 % ``random_phase4`` text (no prose, no callsigns, no
+          Q-codes — see :data:`PHASE_4_0_MIX`).
+        * Quiet-zone padding: every sample inserts a random pre-CW
+          silence in [0.5, 2.0] s and reserves ≥ 0.3 s of post-CW
+          silence. Together with the channel pipeline applied to the
+          full buffer, this teaches the model "decode only when you
+          see ≥ 2 coherent CW characters" — kills the
+          pseudo-character-on-silence failure mode observed live in
+          v0.4.0 streaming.
+        * No empty-sample / post-emission-silence branches — those 3.x
+          curriculum tricks are subsumed by the global quiet-zone
+          design.
+        * No QRM in 4.0a/4.0b (added back in 4.0c via the standard
+          ``qrm_probability`` knob).
+        * WPM range widened to [14, 32] (vs 3.x's [16, 28]).
+
+        Sub-phases differ only in jitter and channel: clean (4.0a) →
+        + jitter (4.0b) → + full HF channel (4.0c). The 4.0a/b are
+        short stabilisation runs (~10k steps each); 4.0c is the
+        long-running phase (~100–150k steps from 3.5 best), since
+        the architectural pivot's whole point is massive char-level
+        training.
+
+        Window / WPM / quiet-zone calibration (validated 2026-04-30):
+
+        * ``target_duration_s = 4.0`` (down from the 3.x default of 6.0).
+          Char-level output doesn't need the word-length context that
+          motivated 6 s — shrinking the window cuts memory ~33 % per
+          sample, which buys back ~33 % more iterations at the same
+          wall-clock budget. The streaming-inference pipeline still
+          uses its 6 s decode window: the encoder is a Conformer, so
+          training and inference window sizes are independent.
+        * ``wpm_range = (18, 32)``: the 14 WPM floor of the original
+          plan was incompatible with the 4 s budget after quiet-zone
+          reservation (only 2-char samples would fit). 18 WPM is
+          still slow CW in practical terms and lets the wpm-aware
+          sampler emit 3+ chars even at the floor.
+        * ``pre_quiet_zone_range_s = (0.3, 1.0)``,
+          ``post_quiet_zone_min_s = 0.3``: half the original (0.5, 2.0)
+          reservation. Preserves the streaming-inertia training value
+          (model still sees 0.3-1.0 s of channel artefacts before any
+          CW) while leaving 2.43 s budget for the CW itself —
+          enough for 3-6 chars across the WPM range.
+        """
+        base = dict(
+            target_duration_s=4.0,
+            wpm_range=(18.0, 32.0),
+            text_mix=PHASE_4_0_MIX,
+            pre_quiet_zone_range_s=(0.3, 1.0),
+            post_quiet_zone_min_s=0.3,
+            empty_sample_probability=0.0,
+            post_emission_silence_probability=0.0,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_4_0_a(cls, **overrides) -> "DatasetConfig":
+        """Phase 4.0a — clean curriculum, no jitter, no channel.
+
+        Bootstrap target: ``checkpoints/phase3_5/best_rnnt.pt``. The
+        clean prefix lets the random-char distribution and quiet-zone
+        positioning stabilise on top of the Phase 3.5 weights before
+        we re-introduce HF impairments.
+        """
+        return cls._phase_4_0_base(**overrides)
+
+    @classmethod
+    def phase_4_0_b(cls, **overrides) -> "DatasetConfig":
+        """Phase 4.0b — 4.0a + Phase-3.5-style operator jitter.
+
+        Same channel-off setting as 4.0a; only operator timing jitter
+        is added. Bootstrap target: ``checkpoints/phase4_0_a/best_rnnt.pt``.
+        """
+        base = dict(
+            operator_element_jitter_range=(0.0, 0.15),
+            operator_gap_jitter_range=(0.0, 0.25),
+        )
+        base.update(overrides)
+        return cls._phase_4_0_base(**base)
+
+    @classmethod
+    def phase_4_0_c(cls, **overrides) -> "DatasetConfig":
+        """Phase 4.0c — full HF channel (AWGN + QSB + QRN + drift + QRM).
+
+        Identical channel envelope to Phase 3.5/3.6; the difference is
+        the underlying text mix (random-only) and quiet-zone padding,
+        so the model learns the same impairments without any
+        linguistic prior. Bootstrap target:
+        ``checkpoints/phase4_0_b/best_rnnt.pt``.
+        """
+        base = dict(
+            operator_element_jitter_range=(0.0, 0.15),
+            operator_gap_jitter_range=(0.0, 0.25),
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+        )
+        base.update(overrides)
+        return cls._phase_4_0_base(**base)
 
     @classmethod
     def phase_3_5(cls, **overrides) -> "DatasetConfig":
@@ -602,11 +759,30 @@ class SyntheticCWDataset(IterableDataset):
         cases (e.g. every sampled text is too long at very slow WPM),
         falls back to a hardcoded short Q-code so the label always
         matches the audio.
+
+        Phase 4.0 fast path: when the mix is ``random_phase4``-only the
+        method computes a wpm-derived ``max_chars`` from the budget and
+        calls the random-char sampler directly. This avoids the Q-code
+        fallback (which would inject linguistic prior into the no-prior
+        curriculum) and the wasted retries on long sequences that
+        cannot fit at low WPM in a 6 s window with quiet zones.
         """
         cfg = self.cfg
-        # Leave a 10% margin so that jitter / keying tail can't push us
-        # past the budget.
-        budget = cfg.target_duration_s * 0.9
+        # Reserve room for the Phase 4.0 quiet zones (zero by default in
+        # 3.x presets, so this is a no-op there): the worst-case pre-CW
+        # silence is the upper bound of pre_quiet_zone_range_s, and the
+        # post-CW silence has a guaranteed minimum.
+        pre_max = max(cfg.pre_quiet_zone_range_s[1], 0.0)
+        post_min = max(cfg.post_quiet_zone_min_s, 0.0)
+        # Leave a 10% margin on top of what's left so that jitter /
+        # keying tail can't push us past the budget.
+        budget = (cfg.target_duration_s - pre_max - post_min) * 0.9
+
+        if cfg.text_mix.is_random_phase4_only():
+            return sample_random_chars_phase4(
+                rng, max_chars=_random_phase4_max_chars(wpm, budget)
+            )
+
         for _ in range(cfg.max_text_retries):
             text = sample_text(rng, cfg.text_mix)
             if estimate_cw_duration_s(text, wpm) <= budget:
@@ -831,9 +1007,20 @@ class SyntheticCWDataset(IterableDataset):
             channel=None,
             freq=freq,
             sample_rate=cfg.sample_rate,
-        )
-        clean_audio = _pad_or_truncate(clean_audio.astype(np.float32),
-                                       cfg.target_samples)
+        ).astype(np.float32)
+        # Phase 4.0 quiet-zone prepend: shift the CW into the buffer by a
+        # random pre-CW silence. The post-CW silence is created
+        # automatically by ``_pad_or_truncate`` — its length is whatever
+        # remains of the buffer; ``_sample_fitting_text`` already
+        # reserves ``post_quiet_zone_min_s`` from the text budget so the
+        # tail is never shorter than the configured minimum.
+        pre_zone_s = self._uniform_or_zero(rng, cfg.pre_quiet_zone_range_s)
+        if pre_zone_s > 0.0:
+            pre_samples = int(round(pre_zone_s * cfg.sample_rate))
+            clean_audio = np.concatenate(
+                [np.zeros(pre_samples, dtype=np.float32), clean_audio]
+            )
+        clean_audio = _pad_or_truncate(clean_audio, cfg.target_samples)
         if qrm_audio is not None:
             clean_audio = clean_audio + qrm_audio
 

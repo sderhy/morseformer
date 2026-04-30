@@ -22,6 +22,7 @@ from pathlib import Path
 import torch
 
 from morseformer.data.synthetic import DatasetConfig
+from morseformer.data.validation import ValidationConfig
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.rnnt import RnntConfig
 from morseformer.train.rnnt_loop import RnntTrainConfig, train
@@ -66,7 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--curriculum",
                    choices=("phase2_0", "phase2_1", "phase2_2",
                             "phase3_1", "phase3_2", "phase3_3",
-                            "phase3_4", "phase3_5", "phase3_6"),
+                            "phase3_4", "phase3_5", "phase3_6",
+                            "phase4_0_a", "phase4_0_b", "phase4_0_c"),
                    default="phase2_1",
                    help="Dataset preset. phase2_1 = Phase 3.0 clean "
                         "ablation. phase3_1 = realistic HF channel. "
@@ -89,12 +91,26 @@ def build_parser() -> argparse.ArgumentParser:
                         "FAV22-clair) + 10 %% post-emission-silence "
                         "samples to close the residual É / À false "
                         "positives observed at the end of the Phase 3.5 "
-                        "live evaluation.")
+                        "live evaluation. "
+                        "phase4_0_a/b/c = Phase 4.0 architectural pivot "
+                        "to pure char-level acoustics (100 %% random "
+                        "chars + accent boost, quiet-zone padded). "
+                        "4.0a clean, 4.0b + jitter, 4.0c + full HF "
+                        "channel; chain via --pretrained-rnnt from the "
+                        "previous best, bootstrap from "
+                        "checkpoints/phase3_5/best_rnnt.pt for 4.0a.")
     # SNR-laddered validation
     p.add_argument("--validation-snrs", default="",
                    help="Comma-separated SNR list for SNR-ladder validation. "
                         "Empty = clean val.")
     p.add_argument("--validation-rx-filter-bw", type=float, default=500.0)
+    p.add_argument("--validation-wpm-bins", default="",
+                   help="Comma-separated WPM bins for the validation grid "
+                        "(e.g. '18,22,26,30,32'). Empty = curriculum-aware "
+                        "default: phase4_0_* uses (18, 22, 26, 30, 32) to "
+                        "match the [18, 32] training range; everything else "
+                        "uses (16, 20, 22, 25, 28) to match the legacy "
+                        "[16, 28] range.")
     # Bookkeeping
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--eval-every", type=int, default=1_000)
@@ -103,6 +119,20 @@ def build_parser() -> argparse.ArgumentParser:
                    default=Path("checkpoints/phase3_0"))
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--resume-from", type=Path, default=None)
+    # Real-audio mix (Phase 3.7+)
+    p.add_argument("--real-audio-jsonl", type=Path, default=None,
+                   help="Path to an aligned real-audio JSONL "
+                        "(scripts/align_ebook_cw.py output). When set, "
+                        "the training stream is a mix of synthetic and "
+                        "real-audio samples controlled by "
+                        "--real-audio-probability.")
+    p.add_argument("--real-audio-probability", type=float, default=0.20,
+                   help="Fraction of batch items drawn from the real-audio "
+                        "source. Ignored when --real-audio-jsonl is unset.")
+    p.add_argument("--real-audio-score-threshold", type=float, default=0.7,
+                   help="Drop aligned chunks below this difflib score "
+                        "(alignment confidence). 0.7 keeps ≈98 %% of the "
+                        "Alice/ToL ebook2cw dataset.")
     return p
 
 
@@ -113,6 +143,12 @@ def _parse_snrs(spec: str) -> tuple[float, ...]:
         if token:
             out.append(float(token))
     return tuple(out)
+
+
+def _default_wpm_bins(curriculum: str) -> tuple[float, ...]:
+    if curriculum.startswith("phase4_0"):
+        return (18.0, 22.0, 26.0, 30.0, 32.0)
+    return (16.0, 20.0, 22.0, 25.0, 28.0)
 
 
 def _auto_device() -> str:
@@ -137,7 +173,13 @@ def main(argv: list[str] | None = None) -> int:
         d_joint=args.d_joint,
     )
 
-    if args.curriculum == "phase3_6":
+    if args.curriculum == "phase4_0_c":
+        dataset_cfg = DatasetConfig.phase_4_0_c(seed=args.seed)
+    elif args.curriculum == "phase4_0_b":
+        dataset_cfg = DatasetConfig.phase_4_0_b(seed=args.seed)
+    elif args.curriculum == "phase4_0_a":
+        dataset_cfg = DatasetConfig.phase_4_0_a(seed=args.seed)
+    elif args.curriculum == "phase3_6":
         dataset_cfg = DatasetConfig.phase_3_6(seed=args.seed)
     elif args.curriculum == "phase3_5":
         dataset_cfg = DatasetConfig.phase_3_5(seed=args.seed)
@@ -159,9 +201,27 @@ def main(argv: list[str] | None = None) -> int:
     validation_snrs = _parse_snrs(args.validation_snrs)
     rx_bw = args.validation_rx_filter_bw if args.validation_rx_filter_bw else None
 
+    # Build a curriculum-matched validation set so the val pipeline
+    # uses the same text mix, target_duration, quiet zones and frontend
+    # as the training stream. Without this, the legacy default
+    # ValidationConfig (DEFAULT_MIX, 6 s window, no quiet zones) would
+    # silently mismatch on Phase 4.0 — the model would be ranked on
+    # Q-codes / callsigns while training on random_phase4 sequences.
+    if args.validation_wpm_bins.strip():
+        wpm_bins = tuple(
+            float(x.strip()) for x in args.validation_wpm_bins.split(",")
+            if x.strip()
+        )
+    else:
+        wpm_bins = _default_wpm_bins(args.curriculum)
+    validation_cfg = ValidationConfig.matching(
+        dataset_cfg, n_per_wpm=40, wpm_bins=wpm_bins,
+    )
+
     cfg = RnntTrainConfig(
         model=model_cfg,
         dataset=dataset_cfg,
+        validation=validation_cfg,
         validation_snrs=validation_snrs,
         validation_rx_filter_bw=rx_bw,
         ctc_weight=args.ctc_weight,
@@ -183,6 +243,9 @@ def main(argv: list[str] | None = None) -> int:
         checkpoint_dir=args.checkpoint_dir,
         jsonl_log=args.checkpoint_dir / "train.jsonl",
         resume_from=args.resume_from,
+        real_audio_jsonl=args.real_audio_jsonl,
+        real_audio_probability=args.real_audio_probability,
+        real_audio_score_threshold=args.real_audio_score_threshold,
     )
 
     print(f"[train_rnnt] device={device} dtype={args.dtype} "

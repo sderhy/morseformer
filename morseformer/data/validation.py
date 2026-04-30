@@ -19,13 +19,22 @@ import math
 import numpy as np
 import torch
 
-from morse_synth.channel import ChannelConfig
+from morse_synth.channel import ChannelConfig, apply_channel
 from morse_synth.core import render
 from morse_synth.keying import KeyingConfig
 from morse_synth.operator import OperatorConfig
 from morseformer.core.tokenizer import encode
-from morseformer.data.synthetic import DatasetConfig, _pad_or_truncate
-from morseformer.data.text import DEFAULT_MIX, TextMix, sample_text
+from morseformer.data.synthetic import (
+    DatasetConfig,
+    _pad_or_truncate,
+    _random_phase4_max_chars,
+)
+from morseformer.data.text import (
+    DEFAULT_MIX,
+    TextMix,
+    sample_random_chars_phase4,
+    sample_text,
+)
 from morseformer.features import FrontendConfig, extract_features
 
 
@@ -45,6 +54,13 @@ class ValidationConfig:
     )
     seed: int = 20_260_418
     max_text_retries: int = 5
+
+    # Phase 4.0 — match the quiet-zone padding from the training
+    # ``DatasetConfig``. Defaults stay zero so 3.x validation sets are
+    # bit-identical to before. ``ValidationConfig.matching()``
+    # propagates the training values automatically.
+    pre_quiet_zone_range_s: tuple[float, float] = (0.0, 0.0)
+    post_quiet_zone_min_s: float = 0.0
 
     @property
     def target_samples(self) -> int:
@@ -67,6 +83,8 @@ class ValidationConfig:
             frontend=ds_cfg.frontend,
             keying=ds_cfg.keying,
             max_text_retries=ds_cfg.max_text_retries,
+            pre_quiet_zone_range_s=ds_cfg.pre_quiet_zone_range_s,
+            post_quiet_zone_min_s=ds_cfg.post_quiet_zone_min_s,
         )
         defaults.update(overrides)
         return cls(**defaults)
@@ -102,8 +120,31 @@ def _render_one(
     snr_db: float,
     rx_filter_bw: float | None,
     channel_seed: int,
+    pre_silence_samples: int = 0,
 ) -> np.ndarray:
-    channel: ChannelConfig | None = None
+    """Render one validation sample with optional quiet-zone prepend.
+
+    The CW is rendered first as a clean waveform; we then prepend
+    ``pre_silence_samples`` of zeros and pad / truncate to the
+    target window. Any AWGN + RX-filter channel is applied last,
+    over the full buffer (silence + CW + tail), so the pre-CW silence
+    inherits the same channel artefacts as in training — this is the
+    "noisy quiet zone" the training pipeline produces.
+    """
+    clean = render(
+        text,
+        operator=OperatorConfig(wpm=wpm),
+        keying=cfg.keying,
+        channel=None,
+        freq=cfg.freq_hz,
+        sample_rate=cfg.sample_rate,
+    ).astype(np.float32)
+    if pre_silence_samples > 0:
+        clean = np.concatenate(
+            [np.zeros(pre_silence_samples, dtype=np.float32), clean]
+        )
+    clean = _pad_or_truncate(clean, cfg.target_samples)
+
     if math.isfinite(snr_db) or rx_filter_bw is not None:
         channel = ChannelConfig(
             snr_db=snr_db,
@@ -111,14 +152,8 @@ def _render_one(
             rx_filter_centre=cfg.freq_hz,
             seed=channel_seed,
         )
-    return render(
-        text,
-        operator=OperatorConfig(wpm=wpm),
-        keying=cfg.keying,
-        channel=channel,
-        freq=cfg.freq_hz,
-        sample_rate=cfg.sample_rate,
-    )
+        return apply_channel(clean, cfg.sample_rate, channel)
+    return clean
 
 
 def _one_sample(
@@ -145,24 +180,51 @@ def _one_sample(
         estimate_cw_duration_s,
     )
 
-    budget = cfg.target_duration_s * 0.9
-    text = ""
-    for _ in range(cfg.max_text_retries):
-        candidate = sample_text(rng, cfg.text_mix)
-        if estimate_cw_duration_s(candidate, wpm) <= budget:
-            text = candidate
-            break
-    if not text:
-        fallbacks = _FALLBACK_SHORT_TEXTS()
-        text = fallbacks[int(rng.integers(0, len(fallbacks)))]
+    # Reserve room for the quiet zones (zero-effect in 3.x configs).
+    pre_max = max(cfg.pre_quiet_zone_range_s[1], 0.0)
+    post_min = max(cfg.post_quiet_zone_min_s, 0.0)
+    budget = (cfg.target_duration_s - pre_max - post_min) * 0.9
+
+    if cfg.text_mix.is_random_phase4_only():
+        # Phase 4.0 fast path — mirror the training-side dispatch:
+        # call the random-char sampler directly with a wpm-derived
+        # max_chars so we never fall back to Q-codes (which would
+        # contaminate the no-prior eval the same way they would
+        # contaminate training).
+        text = sample_random_chars_phase4(
+            rng, max_chars=_random_phase4_max_chars(wpm, budget)
+        )
+    else:
+        text = ""
+        for _ in range(cfg.max_text_retries):
+            candidate = sample_text(rng, cfg.text_mix)
+            if estimate_cw_duration_s(candidate, wpm) <= budget:
+                text = candidate
+                break
+        if not text:
+            fallbacks = _FALLBACK_SHORT_TEXTS()
+            text = fallbacks[int(rng.integers(0, len(fallbacks)))]
+
+    # Per-sample quiet-zone prepend (deterministic via rng so the val
+    # set stays reproducible across runs).
+    pre_lo, pre_hi = cfg.pre_quiet_zone_range_s
+    if pre_hi > pre_lo:
+        pre_silence_s = float(rng.uniform(pre_lo, pre_hi))
+    else:
+        pre_silence_s = 0.0
+    pre_silence_samples = int(round(pre_silence_s * cfg.sample_rate))
 
     channel_seed = int(rng.integers(0, 2**31 - 1))
     if realistic:
         audio = _render_one_realistic(
-            text, wpm, cfg, snr_db, rx_filter_bw, channel_seed, rng
+            text, wpm, cfg, snr_db, rx_filter_bw, channel_seed, rng,
+            pre_silence_samples=pre_silence_samples,
         )
     else:
-        audio = _render_one(text, wpm, cfg, snr_db, rx_filter_bw, channel_seed)
+        audio = _render_one(
+            text, wpm, cfg, snr_db, rx_filter_bw, channel_seed,
+            pre_silence_samples=pre_silence_samples,
+        )
     audio = _pad_or_truncate(audio, cfg.target_samples)
     features = extract_features(audio, cfg.sample_rate, cfg.frontend)
     tokens = encode(text)
@@ -186,6 +248,7 @@ def _render_one_realistic(
     rx_filter_bw: float | None,
     channel_seed: int,
     rng: np.random.Generator,
+    pre_silence_samples: int = 0,
 ) -> np.ndarray:
     """Render a sample with the full Phase 3.1 channel stack.
 
@@ -193,9 +256,11 @@ def _render_one_realistic(
     (freq jitter, QSB, QRN, carrier drift, and a 25 % chance of QRM)
     but with deterministic sampling driven by the provided ``rng`` so
     the validation set is reproducible across runs.
-    """
-    from morse_synth.channel import apply_channel
 
+    ``pre_silence_samples`` (Phase 4.0) prepends a silent quiet zone
+    to the primary CW; QRM and channel are applied to the full buffer
+    so the quiet zone inherits the same channel artefacts as training.
+    """
     freq = cfg.freq_hz + float(rng.uniform(-50.0, 50.0))
     qsb_rate = float(rng.uniform(0.05, 1.0))
     qsb_depth = float(rng.uniform(0.0, 15.0))
@@ -209,8 +274,12 @@ def _render_one_realistic(
         channel=None,
         freq=freq,
         sample_rate=cfg.sample_rate,
-    )
-    clean = _pad_or_truncate(clean.astype(np.float32), cfg.target_samples)
+    ).astype(np.float32)
+    if pre_silence_samples > 0:
+        clean = np.concatenate(
+            [np.zeros(pre_silence_samples, dtype=np.float32), clean]
+        )
+    clean = _pad_or_truncate(clean, cfg.target_samples)
 
     if rng.random() < 0.25:
         qrm_wpm = float(rng.uniform(cfg.wpm_bins[0], cfg.wpm_bins[-1]))
