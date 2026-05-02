@@ -173,11 +173,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--read-chunk-seconds", type=float, default=0.25,
                    help="how often we pull from the audio device. "
                         "Smaller = smoother but more syscalls.")
-    p.add_argument("--confidence-threshold", type=float, default=0.0,
+    p.add_argument("--confidence-threshold", type=float, default=0.6,
                    help="drop emissions with softmax probability below "
-                        "this threshold. 0.0 disables. Try 0.3 - 0.5 on "
-                        "Phase 3.0/3.1 to suppress letter-soup on weak "
-                        "signal.")
+                        "this threshold. 0.0 disables. Default 0.6 was "
+                        "selected on Phase 3.5/best by sweep on FP bench + "
+                        "SNR ladder (2026-05-01): kills 90 %% of noise-only "
+                        "false positives without measurable accuracy loss "
+                        "down to -5 dB SNR. Try 0.7 for zero noise-FP at "
+                        "the cost of slightly tighter margin on chunk "
+                        "boundaries; 0.0 to disable entirely.")
     p.add_argument("--device", default=None,
                    help="cpu / cuda for inference (default: auto)")
     p.add_argument("--audio-device", default=None,

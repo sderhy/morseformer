@@ -30,8 +30,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import math
+
 import torch
 from torch import nn
+from torch.nn import functional as F
 
 from morseformer.core.tokenizer import BLANK_INDEX, VOCAB_SIZE
 from morseformer.models.acoustic import AcousticConfig, AcousticModel
@@ -344,6 +347,182 @@ class RnntModel(nn.Module):
                     pred_out, state = self.pred.step(prev_token, state)
                     emitted += 1
             results.append(hyp)
+        return results
+
+    @torch.no_grad()
+    def beam_rnnt_decode(
+        self,
+        features: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+        beam_width: int = 5,
+        max_emit_per_frame: int = 5,
+        confidence_threshold: float = 0.0,
+    ) -> list[list[int]]:
+        """Frame-synchronous RNN-T beam search (batched joint+pred).
+
+        At each encoder frame, every active hypothesis is expanded over
+        the top-K tokens of the joint distribution. A blank emission
+        advances the hypothesis to the next frame; a non-blank emission
+        extends the token sequence and stays on the same frame for
+        further emission (up to ``max_emit_per_frame``). Hypotheses are
+        pruned back to ``beam_width`` after each frame transition.
+
+        Joint network and predictor LSTM calls are batched across the
+        active hypotheses inside a frame so the per-frame cost stays
+        roughly constant in beam width on GPU. ``beam_width = 1``
+        reproduces greedy behaviour modulo log_softmax vs argmax paths.
+
+        ``confidence_threshold`` (in [0, 1]) drops non-blank candidates
+        whose softmax probability falls below the threshold — same
+        semantic as :meth:`greedy_rnnt_decode`, lifted to per-candidate
+        gating in the beam.
+
+        Returns one list of non-blank token indices per batch item.
+        """
+        self.eval()
+        enc_out, enc_lengths = self.acoustic.encode(features, lengths)
+        b, t_max, _ = enc_out.shape
+        if enc_lengths is None:
+            enc_lengths = torch.full(
+                (b,), t_max, device=enc_out.device, dtype=torch.long
+            )
+        blank = self.cfg.blank_index
+        device = enc_out.device
+
+        log_thr = math.log(confidence_threshold) if confidence_threshold > 0 else None
+        # Per-candidate top-K width for joint expansion. Matches the
+        # output beam width — taking more would inflate the inner loop
+        # without buying recall on a small vocab (49 + blank).
+        top_k = max(beam_width, 2)
+
+        results: list[list[int]] = []
+        for i in range(b):
+            t_valid = int(enc_lengths[i].item())
+
+            # Initial hypothesis: blank context, score 0.
+            init_prev = torch.tensor(
+                [[blank]], dtype=torch.long, device=device
+            )
+            init_pred_out, init_state = self.pred.step(init_prev, None)
+            # Hypothesis tuple layout:
+            # (tokens: tuple[int], score: float, prev_token: [1,1],
+            #  pred_state: (h, c) tuple of [layers, 1, d_pred] tensors,
+            #  pred_out: [1, 1, d_pred], emissions_this_frame: int)
+            beam: list[tuple] = [
+                (tuple(), 0.0, init_prev, init_state, init_pred_out, 0)
+            ]
+
+            for t in range(t_valid):
+                f_single = enc_out[i : i + 1, t : t + 1, :]        # [1, 1, d_enc]
+
+                # Reset per-frame emission counters.
+                frontier = [(toks, sc, pt, st, po, 0)
+                            for (toks, sc, pt, st, po, _) in beam]
+                next_beam: list[tuple] = []
+
+                while frontier:
+                    K = len(frontier)
+                    # Batch joint over the K active hypotheses.
+                    po_batch = torch.cat(
+                        [h[4] for h in frontier], dim=0
+                    )                                                # [K, 1, d_pred]
+                    f_batch = f_single.expand(K, -1, -1)             # [K, 1, d_enc]
+                    logits = self.joint(f_batch, po_batch)           # [K, 1, 1, V]
+                    logp = F.log_softmax(logits[:, 0, 0, :], dim=-1) # [K, V]
+                    top_lp, top_idx = logp.topk(top_k, dim=-1)       # [K, top_k]
+
+                    # Two passes over (hyp, k) pairs: first classify
+                    # into "advance to t+1" (blank or cap) and "extend
+                    # at same t" (non-blank under threshold and cap).
+                    # Extension calls are then batched into one
+                    # pred.step.
+                    pending_extensions: list[tuple] = []
+                    for hyp_idx in range(K):
+                        toks, sc, pt, st, po, n_emit = frontier[hyp_idx]
+                        for k in range(top_k):
+                            tok = int(top_idx[hyp_idx, k].item())
+                            lp = float(top_lp[hyp_idx, k].item())
+                            if tok == blank:
+                                next_beam.append(
+                                    (toks, sc + lp, pt, st, po, 0)
+                                )
+                                continue
+                            # Non-blank.
+                            if log_thr is not None and lp < log_thr:
+                                continue
+                            if n_emit >= max_emit_per_frame:
+                                next_beam.append(
+                                    (toks, sc + lp, pt, st, po, 0)
+                                )
+                                continue
+                            pending_extensions.append(
+                                (hyp_idx, tok, lp, n_emit + 1)
+                            )
+
+                    # Prune extensions before running pred.step to
+                    # avoid wasted work; new frontier only needs the
+                    # top-``beam_width``.
+                    if len(pending_extensions) > beam_width:
+                        # Score-based prune; recompute "would-be"
+                        # score as base score + lp.
+                        pending_extensions.sort(
+                            key=lambda e: -(frontier[e[0]][1] + e[2])
+                        )
+                        pending_extensions = pending_extensions[:beam_width]
+
+                    if not pending_extensions:
+                        frontier = []
+                        continue
+
+                    # Batch pred.step for all surviving extensions.
+                    n_pend = len(pending_extensions)
+                    new_tok_batch = torch.tensor(
+                        [[e[1]] for e in pending_extensions],
+                        dtype=torch.long, device=device,
+                    )                                                # [N, 1]
+                    src_h = torch.cat(
+                        [frontier[e[0]][3][0] for e in pending_extensions],
+                        dim=1,
+                    )                                                # [layers, N, d_pred]
+                    src_c = torch.cat(
+                        [frontier[e[0]][3][1] for e in pending_extensions],
+                        dim=1,
+                    )
+                    new_po, (new_h, new_c) = self.pred.step(
+                        new_tok_batch, (src_h, src_c)
+                    )                                                # [N,1,d_pred]
+                    new_frontier: list[tuple] = []
+                    for j, (hyp_idx, tok, lp, n_emit_new) in enumerate(
+                        pending_extensions
+                    ):
+                        src = frontier[hyp_idx]
+                        new_frontier.append((
+                            src[0] + (tok,),
+                            src[1] + lp,
+                            new_tok_batch[j : j + 1],
+                            (new_h[:, j : j + 1, :].contiguous(),
+                             new_c[:, j : j + 1, :].contiguous()),
+                            new_po[j : j + 1],
+                            n_emit_new,
+                        ))
+                    frontier = new_frontier
+
+                # Prune the set of hypotheses advancing to t+1.
+                if len(next_beam) > beam_width:
+                    next_beam.sort(key=lambda h: -h[1])
+                    next_beam = next_beam[:beam_width]
+                beam = next_beam
+                if not beam:
+                    # Pathological: all hypotheses dropped (e.g. by
+                    # threshold). Stop early; we will return [] for
+                    # this item below.
+                    break
+
+            if beam:
+                best = max(beam, key=lambda h: h[1])
+                results.append(list(best[0]))
+            else:
+                results.append([])
         return results
 
     def load_encoder_state_dict(

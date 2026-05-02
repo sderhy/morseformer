@@ -132,6 +132,7 @@ def _load_lm(path: Path, device: torch.device) -> GptLM:
     cfg = ckpt["config"]
     mcfg = cfg["model"]
     lm_cfg = LmConfig(
+        vocab_size=mcfg["vocab_size"],
         d_model=mcfg["d_model"], n_heads=mcfg["n_heads"],
         n_layers=mcfg["n_layers"], dropout=mcfg["dropout"],
     )

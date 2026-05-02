@@ -60,7 +60,17 @@ model-index:
 - **Languages on input**: English plus a multilingual prose mix in French, German, and Spanish. **French is now first-class**: É, À, and apostrophe are tokenized natively (Phase 3.4 vocabulary extension); other diacritics still ASCII-normalised (è / ê / ç → E / E / C, German umlauts → AE/OE/UE/SS).
 - **Output vocabulary**: **49 tokens** (A–Z, 0–9, space, `. , ? ! / = + -`, plus `É À '`).
 
-This repository hosts the **v0.4.0 release** of morseformer. The Phase 3.5 acoustic model (`rnnt_phase3_5.pt`) is the new recommended checkpoint: it extends the tokenizer from 46 → 49 (adds É / À / apostrophe), trains on a French-rich prose curriculum, and widens the operator-jitter envelope to fix the morning-keying false positives observed on real French QSOs after Phase 3.4. On the French accent-rich bench it reaches **CER 6.46 %** with **97.8 % À precision and 98.4 % apostrophe precision**.
+This repository hosts the **v0.4.1 release** of morseformer. The Phase 3.5 acoustic model (`rnnt_phase3_5.pt`) is unchanged from v0.4.0; v0.4.1 ships two inference-time additions:
+1. `decode_live.py` now defaults to `--confidence-threshold 0.6` (was `0.0`), killing 90 % of noise-driven false positives.
+2. A retrained character LM (`lm_phase5_2.pt`, 49-vocab, `PHASE_3_4_MIX` text mix) makes shallow LM fusion *useful* — −11.4 % CER on real ebook2cw prose audio at λ = 0.7, no regression on the noise/FP bench. Use `scripts/decode_audio.py --lm-ckpt … --fusion-weight 0.7` for offline decoding; live streaming integration is parked for a follow-up.
+
+## What's new in v0.4.1
+
+- **`lm_phase5_2.pt`** — new 4.76 M-param 49-vocab character-level LM, trained on `PHASE_3_4_MIX` (the same text mix the Phase 3.5 acoustic model saw: callsigns 10 %, Q-codes 12 %, QSO 20 %, numerics 12 %, English-words 4 %, random 18 %, multilingual prose 8 %, French-only prose 16 %). 20 k steps, val_ppl 5.626, EMA 0.999. **Replaces `lm_phase4_0.pt` as the recommended fusion LM** — the legacy v0.1 LM was trained on 100 % ham-radio mix (no prose) and is hostile to general prose decoding (PPL 9 on QSO vs 100-200 on Alice). Pair with the Phase 3.5 RNN-T at λ = 0.7 (sweep-tuned).
+- **Streaming false-positive gate**: `decode_live.py --confidence-threshold` default is now `0.6`. On the 150-sample 3-mode noise bench: 1.50 → 0.17 mean characters per noise sample (−90 %). No measurable accuracy loss down to −5 dB SNR. Pass `--confidence-threshold 0.0` to recover v0.4.0 behaviour.
+- **`scripts/decode_audio.py` learns LM fusion**: new `--lm-ckpt`, `--fusion-weight`, `--confidence-threshold` flags. Confidence gating is applied to the *acoustic* softmax pre-LM so threshold and fusion stack cleanly (the LM cannot rescue noise-driven low-confidence emissions).
+- **Autonomous prose validation pipeline**: `data/real/aligned/all_alice.jsonl` (9482 ground-truthed ebook2cw chunks from Alice in Wonderland chapters 1–12) is now the project's prose bench, paired with `scripts/eval_fusion_realaudio.py`. The v0.4.1 fusion verdict was reached without a live IC-7300 test.
+- **`scripts/train_lm.py` learns text mixes**: new `--mix` and `--vocab-size` flags so future LMs can be matched to whatever curriculum the acoustic model was trained on.
 
 ## What's new in v0.4.0
 
@@ -75,11 +85,12 @@ This repository hosts the **v0.4.0 release** of morseformer. The Phase 3.5 acous
 
 | file | params | vocab | description | recommended |
 |---|---|---|---|---|
-| `rnnt_phase3_5.pt` | 4.13 M | **49** | **v0.4 acoustic model** — Phase 3.4 (FR prose + extended É/À/' vocab) + Phase 3.5 (widened jitter). | ✅ |
-| `rnnt_phase3_5.pt` | 4.13 M | 46 | v0.3 acoustic model — multilingual ASCII-normalised prose. No accent tokens. | |
+| `rnnt_phase3_5.pt` | 4.13 M | **49** | **Acoustic model** — Phase 3.4 (FR prose + extended É/À/' vocab) + Phase 3.5 (widened jitter). Unchanged across v0.4.0 / v0.4.1. | ✅ |
+| `lm_phase5_2.pt`   | 4.76 M | **49** | **v0.4.1 LM** — matched to the Phase 3.5 text mix (multilingual prose + ham radio). val_ppl 5.626. **Use this for shallow fusion at λ = 0.7.** | ✅ |
+| `lm_phase4_0.pt`   | 4.76 M | 46 | Legacy v0.1-era LM, 100 % ham-radio text mix. Kept for research / reproducibility; **not recommended for fusion**. | |
+| `rnnt_phase3_3.pt` | 4.13 M | 46 | v0.3 acoustic model — multilingual ASCII-normalised prose. No accent tokens. | |
 | `rnnt_phase3_2.pt` | 4.13 M | 46 | v0.2 acoustic model — anti-hallucination curriculum, no multilingual data. | |
 | `rnnt_phase3_0.pt` | 4.13 M | 46 | v0.1 acoustic model — AWGN-only training. | |
-| `lm_phase4_0.pt`   | 4.76 M | 46 | Character-level language model (optional, research). Fusion gives no measurable gain on synthetic data. | |
 
 ## Intended use
 
@@ -108,15 +119,25 @@ git clone https://github.com/sderhy/morseformer
 cd morseformer
 pip install -e ".[audio]"
 
-# Download the v0.3 checkpoint
+# Download the v0.4.1 checkpoints
 pip install huggingface_hub
 hf download sderhy/morseformer rnnt_phase3_5.pt \
     --local-dir checkpoints/phase3_5
+hf download sderhy/morseformer lm_phase5_2.pt \
+    --local-dir checkpoints/lm_phase5_2
 
-# Decode (any length — chunked into 6 s windows automatically)
+# Decode with shallow-fusion LM rescoring (recommended for prose audio).
+# The threshold gate runs on the acoustic head, so it suppresses noise
+# even when fusion is on.
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt \
-    --freq 600 --sample-rate 8000
+    --ckpt    checkpoints/phase3_5/rnnt_phase3_5.pt \
+    --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
+    --fusion-weight 0.7 \
+    --confidence-threshold 0.6
+
+# Or acoustic-only (v0.4.0 behaviour, no LM, no gating).
+python -m scripts.decode_audio my_recording.wav \
+    --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt
 ```
 
 ### Real-time streaming decode
@@ -125,7 +146,7 @@ python -m scripts.decode_audio my_recording.wav \
 python -m scripts.decode_live --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt
 ```
 
-Tune your receiver to zero-beat at 600 Hz with a ≈ 500 Hz CW filter. `Ctrl+C` to quit. Latency is ~4 s end-to-end. The streaming decoder now preserves inter-word spaces at window boundaries — multi-word prose is rendered with proper word segmentation.
+Tune your receiver to zero-beat at 600 Hz with a ≈ 500 Hz CW filter. `Ctrl+C` to quit. Latency is ~4 s end-to-end. v0.4.1 ships `--confidence-threshold 0.6` as the default, which kills 90 % of noise-driven false positives (FP mean 1.50 → 0.17 chars per noise sample); pass `--confidence-threshold 0.0` to recover the v0.4.0 streaming behaviour exactly. **LM fusion is offline-only in v0.4.1**: the streaming decoder still uses the acoustic-only greedy path. Plumbing fusion through the central-zone-commit logic is a separate piece of work earmarked for a follow-up release.
 
 ## Training data
 
@@ -195,6 +216,48 @@ The −5 / −10 dB AWGN regression v0.2 introduced (in exchange for the anti-ha
 | Max | 21 | 2 | 2 |
 | % "letter-soup" (>5 chars) | 98.7 % | 0.0 % | **0.0 %** |
 
+### v0.4.1 false-positive grid (Phase 3.5 acoustic, threshold × fusion)
+
+`scripts/eval_false_positive.py --candidate-ckpt rnnt_phase3_5 --lm-ckpt lm_phase5_2 --fusion-weight λ_lm --confidence-threshold thr`, 50 samples / mode × 3 modes:
+
+| `confidence_threshold` | `fusion_weight` (λ_lm) | mean chars / noise | max | % > 5 chars |
+|---|---|---|---|---|
+| 0.0 | 0.0 | 1.50 | 2 | 0.0 % |
+| 0.0 | 0.7 | 1.01 | 2 | 0.0 % |
+| **0.6** | 0.0 | **0.17** | 1 | 0.0 % |
+| **0.6** | **0.7** | **0.17** | 1 | 0.0 % |
+
+Threshold 0.6 (the v0.4.1 streaming default) cuts the FP mean by ≈ 90 %. Adding fusion λ = 0.7 on top **does not regress FP** because gating is applied to the acoustic head pre-LM — the LM cannot rescue a low-confidence noise emission. Threshold and fusion stack cleanly.
+
+### v0.4.1 LM rescoring on real prose audio (Alice in Wonderland CW, ground-truth aligned)
+
+`scripts/eval_fusion_realaudio.py --rnnt-ckpt phase3_5 --lm-ckpt lm_phase5_2 --jsonl all_alice.jsonl`, n = 120, score-filter ≥ 0.7 to focus on chunks where the baseline still has CER headroom:
+
+| λ_lm (shallow fusion) | CER | Δ vs baseline |
+|---|---|---|
+| 0.0 (baseline, greedy) | 36.44 % | — |
+| 0.3 | 35.81 % | −1.7 % |
+| 0.5 | 33.46 % | −8.2 % |
+| **0.7** | **32.30 %** | **−11.4 %** ← peak |
+| 1.0 | 33.66 % | −7.6 % |
+
+The Alice corpus is ebook2cw renderings of public-domain English prose (chapters 1–12 of *Alice in Wonderland*), char-aligned by `scripts/align_ebook_cw.py` against the source text — a corpus that was prepared for Phase 3.7 real-audio finetuning and re-purposed here as v0.4.1's autonomous prose bench. The 9482 chunks are deterministic ebook2cw audio, not real-radio captures, but they exercise the model on real linguistic structure (story narrative) where the v0.4.0 acoustic still has headroom and the LM can contribute.
+
+ILME (density-ratio fusion, λ_ilm > 0) is **catastrophically harmful** on this distribution: λ_lm = λ_ilm = 0.2 → CER +18 %, λ_lm = λ_ilm = 0.3 → CER +83 %. The fusion code keeps ILME for research / completeness; it is *not* the recommended path.
+
+### Why the legacy LM (`lm_phase4_0`) does not help
+
+PPL of `lm_phase4_0.pt` (the v0.1 LM, trained on `DEFAULT_MIX` = 100 % ham radio) on representative texts:
+
+| text | PPL |
+|---|---|
+| Alice prose ("ALICE WAS BEGINNING TO GET VERY TIRED OF SITTING …") | 99.5 |
+| Alice prose ("DOWN THE RABBIT HOLE INTO A LARGE RABBIT HOLE") | 213.9 |
+| QSO line ("CQ CQ CQ DE F4ABC F4ABC PSE K") | 8.9 |
+| RST exchange ("UR RST 599 599 NAME TOM TOM 73") | 15.4 |
+
+The legacy LM is calibrated for ham radio and is *hostile* to general prose decoding — fusion with it on Alice audio actively hurts CER (33.86 % → 35.79 % at λ_lm = 0.2 in our re-bench), confirming the Phase 4.1 null-result was a text-distribution mismatch and not a fusion-method problem. `lm_phase5_2.pt` was trained on the same `PHASE_3_4_MIX` the Phase 3.5 acoustic saw, which makes shallow fusion finally useful.
+
 ### Live validation
 
 Two live-radio tests on a real IC-7300 driving the streaming decoder:
@@ -216,7 +279,7 @@ Training budget for v0.4 (everything, Phase 0 → Phase 3.5): roughly 76 h of si
 - PredictionNetwork: Embedding(49, 128) + LSTM(128, 128, 1 layer)
 - JointNetwork: Linear(144 → 256) + Linear(128 → 256) + tanh + Linear(256 → 49)
 
-**Language model** (`lm_phase4_0.pt`, 4.76 M params): unchanged from v0.1, still 46-vocab — fusion with v0.4 acoustic is therefore not directly compatible without a vocab projection.
+**Language model** (`lm_phase5_2.pt`, 4.76 M params, v0.4.1): decoder-only GPT (RMSNorm + SwiGLU + RoPE + tied embeddings + causal SDPA), d=256, L=6, H=4, dropout=0.1, 49-vocab. Trained 20 k steps on `PHASE_3_4_MIX` (matches the Phase 3.5 acoustic distribution), AdamW peak_lr 3e-4, batch 128, bf16, EMA 0.999, val_ppl 5.626. Pair with the RNN-T at λ = 0.7 for the documented prose-CER win. The legacy `lm_phase4_0.pt` (46-vocab, 100 % ham-radio mix, val_ppl 3.75 on its own distribution) is kept for research but is *not* the recommended fusion partner for the 3.5 acoustic — it was the root cause of the Phase 4.1 fusion null-result.
 
 **Vocabulary**: **49 tokens** — blank (index 0), 26 uppercase letters A–Z, 10 digits 0–9, 9 punctuation / Morse prosigns (`.`, `,`, `?`, `!`, `/`, `-`, `=`, `+`, space), plus `É`, `À`, `'`.
 
@@ -225,11 +288,11 @@ Training budget for v0.4 (everything, Phase 0 → Phase 3.5): roughly 76 h of si
 ## Citation
 
 ```bibtex
-@software{morseformer_v0_4_2026,
+@software{morseformer_v0_4_1_2026,
   author       = {Derhy, Serge},
   title        = {morseformer: open-source transformer-based Morse / CW decoder},
   year         = 2026,
-  version      = {v0.4.0},
+  version      = {v0.4.1},
   url          = {https://github.com/sderhy/morseformer},
   howpublished = {\url{https://huggingface.co/sderhy/morseformer}},
 }

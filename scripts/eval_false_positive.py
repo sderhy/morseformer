@@ -45,6 +45,8 @@ from morseformer.data.validation import (
     build_noise_only_validation,
 )
 from morseformer.models.acoustic import AcousticConfig
+from morseformer.models.fusion import FusionConfig, greedy_rnnt_decode_with_lm
+from morseformer.models.lm import GptLM, LmConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
 
@@ -93,9 +95,22 @@ def _score(
     batch_size: int,
     n_per_mode: int,
     confidence_threshold: float,
+    lm: GptLM | None = None,
+    fusion_weight: float = 0.0,
 ) -> list[list[int]]:
-    """Return a list (3 modes) of per-sample emission counts."""
+    """Return a list (3 modes) of per-sample emission counts.
+
+    If ``lm`` is provided and ``fusion_weight > 0`` the noise samples are
+    decoded with shallow fusion (acoustic + λ · LM). Both code paths
+    short-circuit to vanilla greedy when fusion_weight == 0.
+    """
     counts: list[list[int]] = [[], [], []]
+    use_fusion = lm is not None and fusion_weight > 0.0
+    fusion_cfg = FusionConfig(
+        fusion_weight=fusion_weight,
+        ilm_weight=0.0,
+        confidence_threshold=confidence_threshold,
+    ) if use_fusion else None
     for i in range(0, len(samples), batch_size):
         batch_samples = samples[i : i + batch_size]
         features = torch.stack([s.features for s in batch_samples]).to(device)
@@ -103,14 +118,41 @@ def _score(
             [s.n_frames for s in batch_samples], dtype=torch.long, device=device
         )
         with torch.no_grad():
-            hyps = model.greedy_rnnt_decode(
-                features, lengths, confidence_threshold=confidence_threshold,
-            )
+            if use_fusion:
+                hyps = greedy_rnnt_decode_with_lm(
+                    model, lm, features, lengths, fusion_cfg
+                )
+            else:
+                hyps = model.greedy_rnnt_decode(
+                    features, lengths,
+                    confidence_threshold=confidence_threshold,
+                )
         for j, hyp in enumerate(hyps):
             mode = (i + j) // n_per_mode
             text = decode(hyp)
             counts[mode].append(len(text))
     return counts
+
+
+def _load_lm(path: Path, device: torch.device) -> GptLM:
+    ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
+    cfg = ckpt["config"]
+    mcfg = cfg["model"]
+    lm_cfg = LmConfig(
+        vocab_size=mcfg["vocab_size"],
+        d_model=mcfg["d_model"], n_heads=mcfg["n_heads"],
+        n_layers=mcfg["n_layers"], dropout=mcfg["dropout"],
+    )
+    model = GptLM(lm_cfg).to(device)
+    state = dict(ckpt["model"])
+    ema = ckpt.get("ema")
+    if ema:
+        for k, v in ema.items():
+            if k in state:
+                state[k] = v
+    model.load_state_dict(state)
+    model.eval()
+    return model
 
 
 def _summary(name: str, per_mode: list[list[int]]) -> str:
@@ -156,6 +198,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default=None)
     p.add_argument("--confidence-threshold", type=float, default=0.0,
                    help="optional inference-time RNN-T conf threshold")
+    p.add_argument("--lm-ckpt", type=Path, default=None,
+                   help="optional LM checkpoint for shallow-fusion decoding "
+                        "(applied to candidate model only).")
+    p.add_argument("--fusion-weight", type=float, default=0.0,
+                   help="λ_lm for shallow fusion. 0.0 disables fusion.")
     return p
 
 
@@ -175,12 +222,23 @@ def main(argv: list[str] | None = None) -> int:
     candidate = _load_rnnt(args.candidate_ckpt, device)
     print(f"[fp-bench] candidate: {args.candidate_ckpt} "
           f"({sum(p.numel() for p in candidate.parameters()):,} params)")
+    lm = None
+    if args.lm_ckpt is not None and args.fusion_weight > 0.0:
+        lm = _load_lm(args.lm_ckpt, device)
+        print(f"[fp-bench] lm:        {args.lm_ckpt} "
+              f"(λ_lm={args.fusion_weight})")
     cand_per_mode = _score(
         candidate, samples, device, args.batch_size,
         args.n_per_mode, args.confidence_threshold,
+        lm=lm, fusion_weight=args.fusion_weight,
     )
     print()
-    print(_summary(f"candidate ({args.candidate_ckpt.name})", cand_per_mode))
+    cand_label = (
+        f"candidate ({args.candidate_ckpt.name}"
+        + (f", λ_lm={args.fusion_weight}" if lm else "")
+        + ")"
+    )
+    print(_summary(cand_label, cand_per_mode))
 
     if args.baseline_ckpt is not None:
         baseline = _load_rnnt(args.baseline_ckpt, device)

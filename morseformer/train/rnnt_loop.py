@@ -110,6 +110,15 @@ class RnntTrainConfig:
     # --- resume ---
     resume_from: Path | None = None
 
+    # --- real-audio mix (Phase 3.7) ---
+    # If set, mix real-audio samples drawn from this aligned JSONL into
+    # the synthetic stream. Each batch item is drawn from the real-audio
+    # source with probability ``real_audio_probability``. ``None`` =
+    # synthetic-only (legacy behaviour, all phases through 3.6).
+    real_audio_jsonl: Path | None = None
+    real_audio_probability: float = 0.20
+    real_audio_score_threshold: float = 0.7
+
 
 # --------------------------------------------------------------------- #
 # Utilities
@@ -323,6 +332,33 @@ def train(cfg: RnntTrainConfig) -> dict:
             cfg.dataset, seed=cfg.dataset.seed + resumed_step * 7919
         )
     dataset = SyntheticCWDataset(dataset_cfg)
+    if cfg.real_audio_jsonl is not None:
+        from morseformer.data.real_audio import (
+            MixedCWDataset,
+            RealAudioConfig,
+            RealAudioCWDataset,
+        )
+        real_cfg = RealAudioConfig(
+            jsonl_path=cfg.real_audio_jsonl,
+            target_duration_s=dataset_cfg.target_duration_s,
+            sample_rate=dataset_cfg.sample_rate,
+            freq_hz=dataset_cfg.freq_hz,
+            frontend=dataset_cfg.frontend,
+            score_threshold=cfg.real_audio_score_threshold,
+            seed=dataset_cfg.seed + 1,  # disjoint stream from synthetic
+        )
+        real_dataset = RealAudioCWDataset(real_cfg)
+        dataset = MixedCWDataset(
+            synthetic=dataset,
+            real_audio=real_dataset,
+            real_probability=cfg.real_audio_probability,
+            seed=dataset_cfg.seed,
+        )
+        print(
+            f"[train] real-audio mix: {cfg.real_audio_jsonl} "
+            f"({len(real_dataset.records)} chunks ≥ score "
+            f"{cfg.real_audio_score_threshold}, prob={cfg.real_audio_probability:.2f})"
+        )
     loader = DataLoader(
         dataset,
         batch_size=cfg.batch_size,
@@ -610,4 +646,6 @@ def _config_to_jsonable(cfg: RnntTrainConfig) -> dict:
         out["pretrained_encoder"] = str(cfg.pretrained_encoder)
     if cfg.pretrained_rnnt is not None:
         out["pretrained_rnnt"] = str(cfg.pretrained_rnnt)
+    if cfg.real_audio_jsonl is not None:
+        out["real_audio_jsonl"] = str(cfg.real_audio_jsonl)
     return out

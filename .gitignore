@@ -68,3 +68,6 @@ checkpoints/
 # Release staging (produced by scripts/prepare_release.py; uploaded via
 # scripts/push_to_hub.py — never checked into git)
 release/
+
+# Claude Code per-project config and scheduled-task lock — local only.
+.claude/

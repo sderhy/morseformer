@@ -61,6 +61,14 @@ class FusionConfig:
     # LM's calibrated distribution; raising it flattens the prior and
     # is a useful knob when the LM over-commits.
     lm_temperature: float = 1.0
+    # Same semantic as :class:`RnntModel.greedy_rnnt_decode`'s
+    # ``confidence_threshold`` — gates non-blank emissions whose
+    # *acoustic* softmax probability falls below the threshold. Gating
+    # is intentionally on the acoustic head (not on the fused logits)
+    # so that the LM cannot rescue a low-confidence acoustic emission;
+    # this preserves the noise/false-positive suppression that
+    # threshold 0.6 buys at decode time. ``0.0`` disables gating.
+    confidence_threshold: float = 0.0
 
 
 @torch.no_grad()
@@ -104,11 +112,31 @@ def greedy_rnnt_decode_with_lm(
     rnnt.eval()
     lm.eval()
 
-    if rnnt.cfg.vocab_size != lm.cfg.vocab_size:
-        raise ValueError(
-            f"vocab-size mismatch: rnnt={rnnt.cfg.vocab_size} "
-            f"lm={lm.cfg.vocab_size}"
+    # Both weights at 0 ⇒ pure acoustic decode. Short-circuit to the
+    # vanilla path so we (a) avoid wasted LM forwards and (b) avoid
+    # feeding out-of-vocab tokens to a smaller LM (e.g. a 46-token LM
+    # paired with a 49-token RNN-T can otherwise see É/À/' indices in
+    # the running hypothesis and crash CUBLAS at the embedding lookup).
+    if cfg.fusion_weight == 0.0 and cfg.ilm_weight == 0.0:
+        return rnnt.greedy_rnnt_decode(
+            features, lengths,
+            max_emit_per_frame=cfg.max_emit_per_frame,
+            confidence_threshold=cfg.confidence_threshold,
         )
+
+    rnnt_vocab = rnnt.cfg.vocab_size
+    lm_vocab = lm.cfg.vocab_size
+    if lm_vocab > rnnt_vocab:
+        raise ValueError(
+            f"vocab-size mismatch: lm={lm_vocab} > rnnt={rnnt_vocab}. "
+            "LM must share the RNN-T's leading vocabulary indices."
+        )
+    # Phase 3.4 added É/À/' at the tail of the 49-token vocab. A 46-token
+    # LM (Phase 4.0) is therefore semantically a strict prefix and we
+    # pad the missing slots with -inf so fusion treats them as "LM
+    # never picks these characters" — correct for English/synthetic
+    # corpora that don't carry French accents.
+    vocab_pad = rnnt_vocab - lm_vocab
 
     enc_out, enc_lengths = rnnt.acoustic.encode(features, lengths)
     b, t_max, _ = enc_out.shape
@@ -118,7 +146,7 @@ def greedy_rnnt_decode_with_lm(
         )
 
     blank = rnnt.cfg.blank_index
-    vocab_size = rnnt.cfg.vocab_size
+    vocab_size = rnnt_vocab
     results: list[list[int]] = []
 
     # Build a [V]-shaped mask that is 0 on the blank slot, 1 elsewhere.
@@ -161,6 +189,26 @@ def greedy_rnnt_decode_with_lm(
                     logits[0, 0, 0].float(), dim=-1
                 )                                            # [V]
 
+                # Acoustic-only confidence gate (mirrors
+                # RnntModel.greedy_rnnt_decode_aligned). Drop the
+                # emission entirely if the *acoustic* argmax confidence
+                # is below the threshold, regardless of what the LM
+                # would have done — we don't want LM mass rescuing a
+                # low-confidence acoustic prediction on noise. Tested
+                # before computing LM logprobs so we skip the LM
+                # forward on dropped frames (perf win on noise-heavy
+                # audio).
+                if cfg.confidence_threshold > 0.0:
+                    ac_probs = ac_logprobs.exp()
+                    ac_top_tok = int(ac_probs.argmax().item())
+                    if (
+                        ac_top_tok != blank
+                        and float(ac_probs[ac_top_tok].item())
+                        < cfg.confidence_threshold
+                    ):
+                        # Treat as blank, advance frame.
+                        break
+
                 # Feed the emitted history (with BOS=EOS=blank sentinel)
                 # to the LM and take log-probs at the final position.
                 # Context length is bounded by ``hyp`` which can only
@@ -169,11 +217,19 @@ def greedy_rnnt_decode_with_lm(
                     [[EOS_INDEX] + hyp], dtype=torch.long,
                     device=enc_out.device,
                 )
-                lm_logits, _ = lm(lm_input)                  # [1, L, V]
+                lm_logits, _ = lm(lm_input)                  # [1, L, V_lm]
                 lm_logprobs = F.log_softmax(
                     lm_logits[0, -1, :].float() / max(cfg.lm_temperature, 1e-6),
                     dim=-1,
-                )                                            # [V]
+                )                                            # [V_lm]
+                if vocab_pad > 0:
+                    pad = torch.full(
+                        (vocab_pad,),
+                        float("-inf"),
+                        device=lm_logprobs.device,
+                        dtype=lm_logprobs.dtype,
+                    )
+                    lm_logprobs = torch.cat([lm_logprobs, pad], dim=0)
 
                 # Add weighted external LM prior to non-blank slots.
                 fused = ac_logprobs + cfg.fusion_weight * (

@@ -17,9 +17,29 @@ from pathlib import Path
 
 import torch
 
+from morseformer.core.tokenizer import VOCAB_SIZE
 from morseformer.data.lm_dataset import LmDatasetConfig
+from morseformer.data.text import (
+    DEFAULT_MIX,
+    PHASE_3_2_MIX,
+    PHASE_3_3_MIX,
+    PHASE_3_4_MIX,
+    PHASE_3_6_MIX,
+    PHASE_4_0_MIX,
+)
 from morseformer.models.lm import LmConfig
 from morseformer.train.lm_loop import LmTrainConfig, train
+
+
+_MIXES = {
+    "default": DEFAULT_MIX,
+    "phase_3_2": PHASE_3_2_MIX,
+    "phase_3_3": PHASE_3_3_MIX,
+    "phase_3_4": PHASE_3_4_MIX,
+    "phase_3_5": PHASE_3_4_MIX,  # 3.5 reused 3.4's mix
+    "phase_3_6": PHASE_3_6_MIX,
+    "phase_4_0": PHASE_4_0_MIX,
+}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -43,6 +63,18 @@ def build_parser() -> argparse.ArgumentParser:
     # Dataset
     p.add_argument("--context-length", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument(
+        "--mix", choices=tuple(_MIXES.keys()), default="default",
+        help="Text-mix preset to draw training samples from. "
+             "`default` is the Phase 4.0 ham-radio mix (no prose); "
+             "`phase_3_5` matches the 49-vocab acoustic 3.5 distribution "
+             "(adds multilingual prose + French prose + accents).",
+    )
+    p.add_argument(
+        "--vocab-size", type=int, default=VOCAB_SIZE,
+        help="Vocabulary size for embed/head. Defaults to the current "
+             "tokenizer (49). Set to 46 to retrain a legacy LM.",
+    )
     # Bookkeeping
     p.add_argument("--log-every", type=int, default=50)
     p.add_argument("--eval-every", type=int, default=500)
@@ -67,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     device = args.device or _auto_device()
 
     model_cfg = LmConfig(
+        vocab_size=args.vocab_size,
         d_model=args.d_model,
         n_layers=args.n_layers,
         n_heads=args.n_heads,
@@ -74,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     dataset_cfg = LmDatasetConfig(
         context_length=args.context_length,
+        mix=_MIXES[args.mix],
         seed=args.seed,
     )
     cfg = LmTrainConfig(
@@ -99,7 +133,8 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[train_lm] device={device} dtype={args.dtype} "
           f"total_steps={args.total_steps} batch_size={args.batch_size}")
-    print(f"[train_lm] d_model={args.d_model} n_layers={args.n_layers} "
+    print(f"[train_lm] vocab={args.vocab_size} mix={args.mix} "
+          f"d_model={args.d_model} n_layers={args.n_layers} "
           f"n_heads={args.n_heads} context={args.context_length}")
     print(f"[train_lm] checkpoints → {args.checkpoint_dir}")
     result = train(cfg)

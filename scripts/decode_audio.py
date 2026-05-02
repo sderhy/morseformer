@@ -35,6 +35,8 @@ import torch
 from morseformer.core.tokenizer import BLANK_INDEX, ctc_greedy_decode, decode
 from morseformer.features import FrontendConfig, extract_features
 from morseformer.models.acoustic import AcousticConfig, AcousticModel
+from morseformer.models.fusion import FusionConfig, greedy_rnnt_decode_with_lm
+from morseformer.models.lm import GptLM, LmConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
 
@@ -131,6 +133,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="chunk window length in seconds. Matches the "
                         "training-clip length; set to 0 to disable "
                         "chunking.")
+    p.add_argument("--lm-ckpt", type=Path, default=None,
+                   help="optional LM checkpoint (e.g. "
+                        "checkpoints/lm_phase5_2/best.pt) for shallow-"
+                        "fusion RNN-T decoding. Recommended pairing: "
+                        "λ_lm=0.7 with the phase_3_5-mix LM.")
+    p.add_argument("--fusion-weight", type=float, default=0.0,
+                   help="λ_lm for shallow fusion. 0.0 disables fusion; "
+                        "0.7 was tuned on the Alice-real-audio bench "
+                        "(2026-05-01) — peak −11.4 %% CER vs greedy.")
+    p.add_argument("--confidence-threshold", type=float, default=0.0,
+                   help="acoustic-only emission gate. 0.6 mirrors the "
+                        "decode_live default (FP-suppression on noise). "
+                        "Stacks with --fusion-weight: gating still "
+                        "happens on the acoustic head, so the LM cannot "
+                        "rescue noise-driven low-confidence emissions.")
     return p
 
 
@@ -165,6 +182,34 @@ def main(argv: list[str] | None = None) -> int:
         model = AcousticModel(cfg).to(device).eval()
         model.load_state_dict(state)
 
+    # Optional LM for shallow-fusion RNN-T decoding. Only meaningful on
+    # RNN-T checkpoints; CTC fusion is implemented in
+    # morseformer.models.fusion.greedy_ctc_decode_with_lm but not wired
+    # in here yet — `decode_audio` is the offline RNN-T inference entry
+    # point.
+    lm_model: GptLM | None = None
+    if args.lm_ckpt is not None and args.fusion_weight > 0.0:
+        if not is_rnnt:
+            raise SystemExit(
+                "--lm-ckpt only supported for RNN-T checkpoints right now."
+            )
+        lm_ckpt = torch.load(
+            str(args.lm_ckpt), map_location="cpu", weights_only=False
+        )
+        lm_mcfg = lm_ckpt["config"]["model"]
+        lm_cfg = LmConfig(
+            vocab_size=lm_mcfg["vocab_size"],
+            d_model=lm_mcfg["d_model"], n_heads=lm_mcfg["n_heads"],
+            n_layers=lm_mcfg["n_layers"], dropout=lm_mcfg["dropout"],
+        )
+        lm_model = GptLM(lm_cfg).to(device).eval()
+        lm_state = dict(lm_ckpt["model"])
+        if args.use_ema and "ema" in lm_ckpt and lm_ckpt["ema"]:
+            for k, v in lm_ckpt["ema"].items():
+                if k in lm_state:
+                    lm_state[k] = v
+        lm_model.load_state_dict(lm_state)
+
     # Load audio and decide on chunk layout.
     audio = _load_audio(args.audio, args.sample_rate)
     duration_s = audio.size / args.sample_rate
@@ -194,6 +239,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[decode] model: {args.ckpt} ({'RNN-T' if is_rnnt else 'CTC-only'}, "
           f"{sum(p.numel() for p in model.parameters()):,} params, "
           f"EMA {'on' if args.use_ema and ckpt.get('ema') else 'off'})")
+    if lm_model is not None:
+        print(f"[decode] lm:    {args.lm_ckpt} "
+              f"(λ_lm={args.fusion_weight}, "
+              f"thr={args.confidence_threshold})")
     print(f"[decode] chunks: {len(chunks)} × "
           f"{(chunk_samples or audio.size) / args.sample_rate:.2f} s")
 
@@ -214,7 +263,20 @@ def main(argv: list[str] | None = None) -> int:
                 ctc_len = int(enc_lengths[0].item())
                 ctc_parts.append(ctc_greedy_decode(ctc_argmax[:ctc_len]))
 
-                rnnt_tokens = model.greedy_rnnt_decode(x, lengths)[0]
+                if lm_model is not None:
+                    fusion_cfg = FusionConfig(
+                        fusion_weight=args.fusion_weight,
+                        ilm_weight=0.0,
+                        confidence_threshold=args.confidence_threshold,
+                    )
+                    rnnt_tokens = greedy_rnnt_decode_with_lm(
+                        model, lm_model, x, lengths, fusion_cfg
+                    )[0]
+                else:
+                    rnnt_tokens = model.greedy_rnnt_decode(
+                        x, lengths,
+                        confidence_threshold=args.confidence_threshold,
+                    )[0]
                 rnnt_parts.append(decode(rnnt_tokens))
             else:
                 log_probs, lengths_out = model(x, lengths)
