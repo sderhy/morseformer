@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.4.1](https://img.shields.io/badge/release-v0.4.1-brightgreen.svg)](#release-v041)
+[![Release: v0.5.0](https://img.shields.io/badge/release-v0.5.0-brightgreen.svg)](#release-v050)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.4.1 release** keeps the v0.4.0 4.1 M-parameter, 49-token acoustic model and adds two inference-time improvements: (1) a `confidence_threshold = 0.6` default in the streaming decoder that kills 90 % of noise-driven false positives, and (2) a freshly retrained 4.8 M-parameter LM (matched to the Phase 3.5 acoustic distribution) that finally makes shallow fusion *useful* — **−11.4 % CER on real prose audio** at λ = 0.7, with no regression on the noise / FP bench. French accent decoding is unchanged from v0.4.0: 6.46 % CER on the accent-rich bench with 97.8 % À precision and 98.4 % apostrophe precision.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.0 release** ships a new 4.1 M-parameter, 49-token acoustic model (`rnnt_phase5_4.pt`) trained with a wider operator-jitter envelope (Phase 5.3) and a 30 % real-audio mix from human-keyed CW (Phase 5.4). The result is a model that finally absorbs the timing irregularities of real human keying that the synthetic-only v0.4.x kept tripping over: **−47 % CER on real prose audio (Alice ebook2cw, n=120)**, **−75 % CER on the synthetic FR-mix bench**, **0 / 150 false positives** on the noise bench (was 0.17 in v0.4.1), and visibly readable decodes on hand-keyed audio that came back as letter-soup at v0.4.x. French accent decoding is preserved.
 
 ## Why
 
@@ -21,27 +21,29 @@ cd morseformer
 pip install -e ".[dev,audio]"
 pytest -q
 
-# download the v0.4.1 release checkpoints (acoustic 33 MB + LM 19 MB)
+# download the v0.5.0 release checkpoints (acoustic 33 MB + LM 38 MB)
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase3_5.pt \
-    --local-dir checkpoints/phase3_5
+hf download sderhy/morseformer rnnt_phase5_4.pt \
+    --local-dir checkpoints/phase5_4
 hf download sderhy/morseformer lm_phase5_2.pt \
     --local-dir checkpoints/lm_phase5_2
 
-# decode a .wav file (any length — audio is chunked into 6 s windows,
-# the length the model was trained on). Add --lm-ckpt + --fusion-weight
-# for the v0.4.1 LM-rescoring win on prose audio (~−11 % CER); leave
-# them off to reproduce the v0.4.0 acoustic-only behaviour.
+# Recommended: shallow-fusion decode (acoustic + LM). Cuts another
+# −13 % CER on real prose on top of the v0.5.0 acoustic gain.
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt \
+    --ckpt    checkpoints/phase5_4/rnnt_phase5_4.pt \
     --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
     --fusion-weight 0.7 \
     --confidence-threshold 0.6
 
-# OR: real-time streaming on a live receiver (PulseAudio input).
-# Threshold 0.6 is the new v0.4.1 default — gates noise-driven
-# false positives. Fusion is offline-only for now (see v0.4.1 notes).
-python -m scripts.decode_live --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt
+# Or acoustic-only (faster, no LM dependency)
+python -m scripts.decode_audio my_recording.wav \
+    --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
+
+# Real-time streaming on a live receiver (PulseAudio input).
+# Threshold 0.6 is the v0.4.1+ default — gates noise-driven
+# false positives. Fusion is offline-only for now.
+python -m scripts.decode_live --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -49,6 +51,63 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 ```
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
+```
+
+## Release v0.5.0
+
+The v0.4.1 acoustic was synthetic-only and tripped on real human keying — the live test surfaced systematic stutter (`F = ..-.` decoded as `A + V`, repeated emissions like `WWWVVUT`) on hand-keyed audio. v0.5.0 fixes the acoustic model itself with **two new training stages on top of v0.4.0's Phase 3.5**:
+
+- **Phase 5.3 — wider operator-timing envelope.** New `OperatorConfig` knobs `dash_dot_ratio` (sampled per utterance from `U(2.5, 4.5)`, was a fixed `3.0`) and `gap_inflation` (`U(0.8, 1.6)` multiplicative on inter-element gaps, was identity). Element-jitter widened to `U(0, 0.30)` and gap-jitter to `U(0, 0.50)` (was `(0, 0.15)` / `(0, 0.25)`). Fine-tune of 15 k steps from `phase3_5/best`.
+
+- **Phase 5.4 — real-audio mix.** Bootstrap from `phase5_3/best`, fine-tune 12 k steps with **30 % of every batch drawn from real human-keyed audio** (42 ground-truth-aligned 6 s chunks of contest exchanges + random sequences + Wordsworth's *Daffodils*, aligned via `scripts/align_ebook_cw.py` against a hand-written transcript). The synthetic 70 % keeps Phase 5.3's wider-envelope curriculum so the model does not regress on the synthetic distribution.
+
+Seven artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
+
+| file | params | vocab | description | recommended |
+|---|---|---|---|---|
+| `rnnt_phase5_4.pt` | 4.13 M | **49** | **v0.5.0 acoustic — Phase 5.3 (wider jitter / dash:dot ratio) + Phase 5.4 (real-audio mix).** | ✅ |
+| `lm_phase5_2.pt` | 4.76 M | 49 | v0.4.1 LM, unchanged. Use at λ_lm = 0.7 for fusion. | ✅ |
+| `rnnt_phase3_5.pt` | 4.13 M | 49 | v0.4.0 / v0.4.1 acoustic — synthetic-only. Kept for diff. | |
+| `lm_phase4_0.pt` | 4.76 M | 46 | Legacy v0.1-era LM, ham-radio-only mix. | |
+| `rnnt_phase3_3.pt` | 4.13 M | 46 | v0.3 acoustic. | |
+| `rnnt_phase3_2.pt` | 4.13 M | 46 | v0.2 acoustic. | |
+| `rnnt_phase3_0.pt` | 4.13 M | 46 | v0.1 acoustic. | |
+
+### What's new in v0.5.0
+
+| Bench | v0.4.1 (`phase3_5/best` + fusion) | **v0.5.0 (`phase5_4/last` + fusion)** |
+|---|---|---|
+| **Alice ebook2cw prose, n=120 score≥0.7, greedy** | 36.44 % CER | **19.16 % CER** (−47 % rel.) |
+| **Alice ebook2cw prose, n=120 score≥0.7, fusion λ=0.7** | 32.30 % CER | **16.59 % CER** (−49 % rel.) |
+| **Synthetic FR-mix, n=8 (samples drawn from PHASE_3_4_MIX)** | 50.0 % CER | **12.5 % CER** (−75 % rel.) |
+| **FP bench, threshold 0.6 + fusion** | 0.17 chars / noise sample | **0.00 / 150** (zero false positives) |
+| **Hand-keyed `test.wav` Daffodils section** | `NNNNFFFOLS, BENEATS THE TLES` (letter-soup) | `NNFODILS, BENEATH T HE TREES, FLUT TERING AND DPCING IN TTHE BREEZE` (readable) |
+
+The improvement is *not* localised to the user audio that was mixed in: the Alice (−47 %) and synthetic FR-mix (−75 %) gains are out-of-domain wins, confirming the wider operator envelope plus a small real-audio prior lifted the model out of a synthetic-only basin.
+
+### Limitations of v0.5.0
+
+- The real-audio mix is **42 chunks total** (~4 minutes of audio from a single recording session). The model has clearly generalised beyond it (Alice / synth FR gains) but a larger and more diverse real-audio corpus is the natural next step.
+- LM fusion is still **offline only**. `decode_live.py` keeps the v0.4.1 streaming greedy path; plumbing fusion through the central-zone-commit logic is parked for a follow-up.
+- **Caveat**: the `test.wav` improvement is partly in-domain — that audio was in the training mix. Out-of-domain validation is via Alice and the synthetic FR mix, both of which the model never saw.
+- ILME / density-ratio fusion remains catastrophic on this distribution; do **not** pass `--ilm-weight > 0` (kept in the codebase for research only).
+
+### Recommended decode for v0.5.0
+
+Offline (any length, with fusion):
+
+```bash
+python -m scripts.decode_audio my_recording.wav \
+    --ckpt    checkpoints/phase5_4/rnnt_phase5_4.pt \
+    --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
+    --fusion-weight 0.7 \
+    --confidence-threshold 0.6
+```
+
+Live streaming (no fusion yet — gating only):
+
+```bash
+python -m scripts.decode_live --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
 ```
 
 ## Release v0.4.1

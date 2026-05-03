@@ -162,6 +162,17 @@ class DatasetConfig:
     rx_filter_bw: float | None = None
     operator_element_jitter_range: tuple[float, float] = (0.0, 0.0)
     operator_gap_jitter_range: tuple[float, float] = (0.0, 0.0)
+    # --- Phase 5.3 extensions: hand-keyed audio robustness ---
+    # `dash_dot_ratio_range`: nominal dah:dit ratio sampled per utterance
+    # from U(lo, hi). Real keyers vary in [2.5, 4.5] depending on hand
+    # technique / weighting; the ideal Morse 3:1 is too rigid for
+    # captured operator audio. (lo == hi) keeps the canonical 3:1.
+    # `gap_inflation_range`: multiplicative bias on every inter-element
+    # gap (after jitter). > 1 lengthens gaps inside a character;
+    # captures keyers with a heavy release bias that makes a `..-.` (F)
+    # look like `.-` + `...-` (A + V). 1.0 = identity.
+    operator_dash_dot_ratio_range: tuple[float, float] = (3.0, 3.0)
+    operator_gap_inflation_range: tuple[float, float] = (1.0, 1.0)
 
     # --- Phase 3.1 extensions: richer HF channel, all disabled by default ---
     #
@@ -491,6 +502,53 @@ class DatasetConfig:
         return cls._phase_4_0_base(**base)
 
     @classmethod
+    def phase_5_3(cls, **overrides) -> "DatasetConfig":
+        """Phase 5.3 hand-keyed-robustness curriculum.
+
+        Phase 3.5 channel + Phase 3.4 text mix, with two additional
+        operator-timing dimensions opened up to handle real human
+        keying picked up by the v0.4.1 live test on `test.wav`:
+
+        * `operator_element_jitter_range = (0, 0.30)` (was (0, 0.15))
+        * `operator_gap_jitter_range = (0, 0.50)` (was (0, 0.25))
+        * `operator_dash_dot_ratio_range = (2.5, 4.5)` per-sample
+        * `operator_gap_inflation_range = (0.8, 1.6)` per-sample
+
+        The ratio randomisation covers operators whose dah length is
+        not exactly 3× the dit (typical hand-keying ranges 2.5-4.5).
+        The gap inflation widens inter-element gaps inside a character
+        without lengthening the character/word gaps, which is the
+        signature failure mode the v0.4.1 test surfaced — the model
+        was reading `F = ..-.` as `A + V = .- + ...-` because the
+        inter-element gaps in the hand-keyed audio looked closer to
+        a character gap than a single dot-unit.
+
+        Bootstrap target: `checkpoints/phase3_5/best_rnnt.pt` —
+        same vocab (49) and same channel.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_4_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
     def phase_3_5(cls, **overrides) -> "DatasetConfig":
         """Phase 3.5 wider-jitter curriculum.
 
@@ -691,6 +749,13 @@ class SyntheticCWDataset(IterableDataset):
         lo_g, hi_g = self.cfg.operator_gap_jitter_range
         element_jitter = 0.0 if hi_e <= lo_e else float(rng.uniform(lo_e, hi_e))
         gap_jitter = 0.0 if hi_g <= lo_g else float(rng.uniform(lo_g, hi_g))
+        # Phase 5.3 knobs — fall through to canonical 3:1 / 1.0 if the
+        # range is degenerate (so legacy presets are byte-identical to
+        # before this extension landed).
+        lo_r, hi_r = self.cfg.operator_dash_dot_ratio_range
+        dash_dot_ratio = 3.0 if hi_r <= lo_r else float(rng.uniform(lo_r, hi_r))
+        lo_i, hi_i = self.cfg.operator_gap_inflation_range
+        gap_inflation = 1.0 if hi_i <= lo_i else float(rng.uniform(lo_i, hi_i))
         # Derive a per-sample operator seed so that timing is reproducible
         # given the parent RNG state.
         op_seed = int(rng.integers(0, 2**31 - 1))
@@ -698,6 +763,8 @@ class SyntheticCWDataset(IterableDataset):
             wpm=wpm,
             element_jitter=element_jitter,
             gap_jitter=gap_jitter,
+            dash_dot_ratio=dash_dot_ratio,
+            gap_inflation=gap_inflation,
             seed=op_seed,
         )
 

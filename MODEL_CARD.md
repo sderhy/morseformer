@@ -19,7 +19,7 @@ language:
   - es
 base_model: []
 model-index:
-  - name: morseformer-phase3-5-rnnt
+  - name: morseformer-phase5-4-rnnt
     results:
       - task:
           type: automatic-speech-recognition
@@ -60,9 +60,24 @@ model-index:
 - **Languages on input**: English plus a multilingual prose mix in French, German, and Spanish. **French is now first-class**: É, À, and apostrophe are tokenized natively (Phase 3.4 vocabulary extension); other diacritics still ASCII-normalised (è / ê / ç → E / E / C, German umlauts → AE/OE/UE/SS).
 - **Output vocabulary**: **49 tokens** (A–Z, 0–9, space, `. , ? ! / = + -`, plus `É À '`).
 
-This repository hosts the **v0.4.1 release** of morseformer. The Phase 3.5 acoustic model (`rnnt_phase3_5.pt`) is unchanged from v0.4.0; v0.4.1 ships two inference-time additions:
-1. `decode_live.py` now defaults to `--confidence-threshold 0.6` (was `0.0`), killing 90 % of noise-driven false positives.
-2. A retrained character LM (`lm_phase5_2.pt`, 49-vocab, `PHASE_3_4_MIX` text mix) makes shallow LM fusion *useful* — −11.4 % CER on real ebook2cw prose audio at λ = 0.7, no regression on the noise/FP bench. Use `scripts/decode_audio.py --lm-ckpt … --fusion-weight 0.7` for offline decoding; live streaming integration is parked for a follow-up.
+This repository hosts the **v0.5.0 release** of morseformer. The recommended acoustic checkpoint is now `rnnt_phase5_4.pt` (4.13 M params, 49-vocab), trained from `phase3_5/best` through two new fine-tune stages designed to absorb real human-keying timing characteristics that the synthetic-only v0.4.x kept tripping over. The v0.4.1 LM (`lm_phase5_2.pt`) and the offline-fusion recipe are unchanged.
+
+## What's new in v0.5.0
+
+The motivating live test (2026-05-02) was a 7-minute hand-keyed `test.wav` with a mix of contest exchanges, random-character blocks, FAV22 clair extracts, and the *Daffodils* poem. v0.4.1 produced unreadable letter-soup on the keyed sections (`F = ..-.` decoded as `A + V`, repeated emissions like `WWWVVUT TEST` for `IK3VUT TEST`). Diagnosis: real human keying has dot/dash ratios and inter-element gaps outside the synthetic curriculum's envelope, and confidence-threshold + LM-fusion at inference time cannot compensate (the acoustic head is *confident* on its wrong interpretations).
+
+- **`rnnt_phase5_4.pt`** — new recommended acoustic. Bootstrap chain: `phase3_5/best → phase5_3/best → phase5_4/last`.
+  - **Phase 5.3 (15 k steps)** widens the synthetic operator envelope: element-jitter `(0, 0.30)` (was `(0, 0.15)`), gap-jitter `(0, 0.50)` (was `(0, 0.25)`), and two new `OperatorConfig` knobs sampled per utterance — `dash_dot_ratio ∈ U(2.5, 4.5)` (was a fixed `3.0`) and `gap_inflation ∈ U(0.8, 1.6)` (multiplicative on inter-element gaps, was identity). The synthesis stack is otherwise identical to Phase 3.5.
+  - **Phase 5.4 (12 k steps)** mixes 30 % of every batch from a real-audio JSONL of 42 ground-truth-aligned 6 s chunks of human-keyed CW (the `test.wav` corpus, aligned via `scripts/align_ebook_cw.py` against a hand-written transcript). The synthetic 70 % keeps the Phase 5.3 wider-envelope curriculum so the model does not regress.
+- The **wider-jitter alone (Phase 5.3) was insufficient**: byte-for-byte identical decode to v0.4.1 on the keyed audio. The real-audio prior in Phase 5.4 was the unblock.
+- The **improvement is not localised**: out-of-domain Alice ebook2cw prose (n=120, score≥0.7) drops from **36.44 % CER → 19.16 %** (greedy) and **32.30 % → 16.59 %** (with fusion λ=0.7). Synthetic FR-mix samples drop from **50.0 % → 12.5 %**. FP bench (threshold 0.6 + fusion 0.7): **0 / 150** (was 0.17 mean in v0.4.1).
+- **`scripts/train_rnnt.py` learns `--curriculum phase5_3`**, `--real-audio-jsonl`, `--real-audio-probability`, and `--real-audio-score-threshold` for reproducing v0.5.0.
+- LM fusion is still **offline only**; streaming-decoder integration is parked for a follow-up.
+
+### Caveats
+
+- The 42 real-audio chunks are from a single recording session; that audio is in-distribution for v0.5.0. Out-of-domain validation lives in the Alice and synthetic FR benches above.
+- ILME / density-ratio fusion is still catastrophic on this distribution; do **not** pass `--ilm-weight > 0`.
 
 ## What's new in v0.4.1
 
@@ -85,8 +100,9 @@ This repository hosts the **v0.4.1 release** of morseformer. The Phase 3.5 acous
 
 | file | params | vocab | description | recommended |
 |---|---|---|---|---|
-| `rnnt_phase3_5.pt` | 4.13 M | **49** | **Acoustic model** — Phase 3.4 (FR prose + extended É/À/' vocab) + Phase 3.5 (widened jitter). Unchanged across v0.4.0 / v0.4.1. | ✅ |
-| `lm_phase5_2.pt`   | 4.76 M | **49** | **v0.4.1 LM** — matched to the Phase 3.5 text mix (multilingual prose + ham radio). val_ppl 5.626. **Use this for shallow fusion at λ = 0.7.** | ✅ |
+| `rnnt_phase5_4.pt` | 4.13 M | **49** | **v0.5.0 acoustic — Phase 5.3 (wider jitter + dash:dot ratio randomisation) + Phase 5.4 (30 % real-audio mix from human keying).** | ✅ |
+| `lm_phase5_2.pt`   | 4.76 M | **49** | v0.4.1 LM — matched to the Phase 3.5 text mix (multilingual prose + ham radio). val_ppl 5.626. **Use this for shallow fusion at λ = 0.7.** | ✅ |
+| `rnnt_phase3_5.pt` | 4.13 M | 49 | v0.4.0 / v0.4.1 acoustic — synthetic-only. Kept for diff. | |
 | `lm_phase4_0.pt`   | 4.76 M | 46 | Legacy v0.1-era LM, 100 % ham-radio text mix. Kept for research / reproducibility; **not recommended for fusion**. | |
 | `rnnt_phase3_3.pt` | 4.13 M | 46 | v0.3 acoustic model — multilingual ASCII-normalised prose. No accent tokens. | |
 | `rnnt_phase3_2.pt` | 4.13 M | 46 | v0.2 acoustic model — anti-hallucination curriculum, no multilingual data. | |
@@ -119,10 +135,10 @@ git clone https://github.com/sderhy/morseformer
 cd morseformer
 pip install -e ".[audio]"
 
-# Download the v0.4.1 checkpoints
+# Download the v0.5.0 checkpoints
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase3_5.pt \
-    --local-dir checkpoints/phase3_5
+hf download sderhy/morseformer rnnt_phase5_4.pt \
+    --local-dir checkpoints/phase5_4
 hf download sderhy/morseformer lm_phase5_2.pt \
     --local-dir checkpoints/lm_phase5_2
 
@@ -130,20 +146,20 @@ hf download sderhy/morseformer lm_phase5_2.pt \
 # The threshold gate runs on the acoustic head, so it suppresses noise
 # even when fusion is on.
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt    checkpoints/phase3_5/rnnt_phase3_5.pt \
+    --ckpt    checkpoints/phase5_4/rnnt_phase5_4.pt \
     --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
     --fusion-weight 0.7 \
     --confidence-threshold 0.6
 
-# Or acoustic-only (v0.4.0 behaviour, no LM, no gating).
+# Or acoustic-only (no LM, no gating — fastest, smallest deps).
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt
+    --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
 ```
 
 ### Real-time streaming decode
 
 ```bash
-python -m scripts.decode_live --ckpt checkpoints/phase3_5/rnnt_phase3_5.pt
+python -m scripts.decode_live --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
 ```
 
 Tune your receiver to zero-beat at 600 Hz with a ≈ 500 Hz CW filter. `Ctrl+C` to quit. Latency is ~4 s end-to-end. v0.4.1 ships `--confidence-threshold 0.6` as the default, which kills 90 % of noise-driven false positives (FP mean 1.50 → 0.17 chars per noise sample); pass `--confidence-threshold 0.0` to recover the v0.4.0 streaming behaviour exactly. **LM fusion is offline-only in v0.4.1**: the streaming decoder still uses the acoustic-only greedy path. Plumbing fusion through the central-zone-commit logic is a separate piece of work earmarked for a follow-up release.
@@ -273,7 +289,7 @@ Training budget for v0.4 (everything, Phase 0 → Phase 3.5): roughly 76 h of si
 
 ## Technical specifications
 
-**Acoustic model** (`rnnt_phase3_5.pt`, 4.13 M params, identical architecture to v0.1 / v0.2 / v0.3 except for the wider output head):
+**Acoustic model** (`rnnt_phase5_4.pt`, 4.13 M params, identical architecture to v0.1 / v0.2 / v0.3 except for the wider output head; v0.5.0 differs from v0.4.x only in training data):
 - Encoder: Conformer d=144, L=8, H=4, ff_expansion=4, conv_kernel=31, RoPE, LayerNorm conv, 4× subsample
 - CTC head: Linear(144 → 49)
 - PredictionNetwork: Embedding(49, 128) + LSTM(128, 128, 1 layer)
@@ -288,11 +304,11 @@ Training budget for v0.4 (everything, Phase 0 → Phase 3.5): roughly 76 h of si
 ## Citation
 
 ```bibtex
-@software{morseformer_v0_4_1_2026,
+@software{morseformer_v0_5_0_2026,
   author       = {Derhy, Serge},
   title        = {morseformer: open-source transformer-based Morse / CW decoder},
   year         = 2026,
-  version      = {v0.4.1},
+  version      = {v0.5.0},
   url          = {https://github.com/sderhy/morseformer},
   howpublished = {\url{https://huggingface.co/sderhy/morseformer}},
 }

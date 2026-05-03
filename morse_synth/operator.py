@@ -30,13 +30,26 @@ class OperatorConfig:
         wpm:                 Nominal speed in words per minute (PARIS).
         element_jitter:      Stddev of per-element length noise, measured in
                              dot-units. Applied multiplicatively around the
-                             nominal element duration (1 unit for dit, 3 for dah).
+                             nominal element duration (1 unit for dit, dash_dot_ratio for dah).
         gap_jitter:          Stddev of per-gap length noise, in dot-units. Applied
                              to every inter-element, inter-character, inter-word gap.
         farnsworth_char_gap: Character-gap length in dot-units. 3.0 = ideal; larger
                              values slow down the character spacing while keeping
                              element speed high (Farnsworth).
         farnsworth_word_gap: Word-gap length in dot-units. 7.0 = ideal.
+        dash_dot_ratio:      Length of a dah relative to a dit, in dot-units.
+                             3.0 = ideal Morse. Real human operators key with
+                             ratios in roughly [2.5, 4.5] depending on keyer
+                             weighting / hand technique. v0.4.1 tests
+                             surfaced "F → A + V" misreads on hand-keyed audio
+                             where the inter-element gap exceeded the dot
+                             length more than the synthetic envelope allowed;
+                             Phase 5.3 randomises this ratio per sample.
+        gap_inflation:       Multiplicative bias on every inter-element gap
+                             after jitter. ``1.0`` = unchanged; > 1 lengthens
+                             gaps (slow / weighted operator); < 1 tightens.
+                             Phase 5.3 samples this in roughly [0.8, 1.6] to
+                             cover keyers with a heavy "release" bias.
         seed:                Optional integer seed for reproducibility.
     """
 
@@ -45,6 +58,8 @@ class OperatorConfig:
     gap_jitter: float = 0.0
     farnsworth_char_gap: float = 3.0
     farnsworth_word_gap: float = 7.0
+    dash_dot_ratio: float = 3.0
+    gap_inflation: float = 1.0
     seed: int | None = None
 
 
@@ -73,6 +88,17 @@ def build_events(text: str, cfg: OperatorConfig | None = None) -> list[Event]:
         factor = nominal + rng.normal(0.0, sigma)
         return max(0.1, factor)
 
+    # Phase 5.3: dash length and gap inflation are configurable. The
+    # synthetic Morse table assumes a 3:1 dah:dit ratio, but real
+    # operators key in roughly [2.5, 4.5]; v0.4.1 tests on hand-keyed
+    # audio surfaced "F → A + V" misreads where the model interpreted
+    # an inter-element gap as a character gap. Lengthening every
+    # inter-element gap by ``gap_inflation`` (without touching the
+    # character or word gap) covers operators with a heavy release
+    # bias inside the same character.
+    dash_units = max(1.0, cfg.dash_dot_ratio)
+    inflation = max(0.1, cfg.gap_inflation)
+
     events: list[Event] = []
     words = text.upper().split()
     for word_i, word in enumerate(words):
@@ -88,9 +114,9 @@ def build_events(text: str, cfg: OperatorConfig | None = None) -> list[Event]:
                 events.append((False, gap_units * u))
             for elem_i, elem in enumerate(code):
                 if elem_i > 0:
-                    gap_units = jitter_units(1.0, cfg.gap_jitter)
+                    gap_units = jitter_units(1.0, cfg.gap_jitter) * inflation
                     events.append((False, gap_units * u))
-                nominal = 1.0 if elem == "." else 3.0
+                nominal = 1.0 if elem == "." else dash_units
                 elem_units = jitter_units(nominal, cfg.element_jitter)
                 events.append((True, elem_units * u))
 
