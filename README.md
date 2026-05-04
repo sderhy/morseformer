@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.5.0](https://img.shields.io/badge/release-v0.5.0-brightgreen.svg)](#release-v050)
+[![Release: v0.5.1](https://img.shields.io/badge/release-v0.5.1-brightgreen.svg)](#release-v051)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.0 release** ships a new 4.1 M-parameter, 49-token acoustic model (`rnnt_phase5_4.pt`) trained with a wider operator-jitter envelope (Phase 5.3) and a 30 % real-audio mix from human-keyed CW (Phase 5.4). The result is a model that finally absorbs the timing irregularities of real human keying that the synthetic-only v0.4.x kept tripping over: **−47 % CER on real prose audio (Alice ebook2cw, n=120)**, **−75 % CER on the synthetic FR-mix bench**, **0 / 150 false positives** on the noise bench (was 0.17 in v0.4.1), and visibly readable decodes on hand-keyed audio that came back as letter-soup at v0.4.x. French accent decoding is preserved.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.1 release** ships a new acoustic model (`rnnt_phase5_5.pt`) that fixes the v0.5.0 live failure mode where prolonged silences between words (a slow / hesitant operator) caused word fusion or hallucinations: at 25 WPM with 6× inflated inter-word silence, word recall jumps from **8 / 30 → 27 / 30** and CER from **17.4 % → 1.5 %**. Out-of-domain wins are preserved (Alice ebook2cw n=120: 18.8 % → 16.4 % CER) and false positives stay at zero in `decode_live` mode. The model is a single-knob extension of v0.5.0's Phase 5.3 / 5.4 curriculum: per-utterance inter-word gap inflation sampled in `U(1.0, 8.0)`.
 
 ## Why
 
@@ -21,29 +21,29 @@ cd morseformer
 pip install -e ".[dev,audio]"
 pytest -q
 
-# download the v0.5.0 release checkpoints (acoustic 33 MB + LM 38 MB)
+# download the v0.5.1 release checkpoints (acoustic 33 MB + LM 38 MB)
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase5_4.pt \
-    --local-dir checkpoints/phase5_4
+hf download sderhy/morseformer rnnt_phase5_5.pt \
+    --local-dir checkpoints/phase5_5
 hf download sderhy/morseformer lm_phase5_2.pt \
     --local-dir checkpoints/lm_phase5_2
 
 # Recommended: shallow-fusion decode (acoustic + LM). Cuts another
-# −13 % CER on real prose on top of the v0.5.0 acoustic gain.
+# −13 % CER on real prose on top of the v0.5.1 acoustic gain.
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt    checkpoints/phase5_4/rnnt_phase5_4.pt \
+    --ckpt    checkpoints/phase5_5/rnnt_phase5_5.pt \
     --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
     --fusion-weight 0.7 \
     --confidence-threshold 0.6
 
 # Or acoustic-only (faster, no LM dependency)
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
+    --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
 
 # Real-time streaming on a live receiver (PulseAudio input).
 # Threshold 0.6 is the v0.4.1+ default — gates noise-driven
 # false positives. Fusion is offline-only for now.
-python -m scripts.decode_live --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
+python -m scripts.decode_live --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -53,6 +53,43 @@ CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
 ```
 
+## Release v0.5.1
+
+The v0.5.0 live test surfaced one residual failure mode: when a slow / hesitant operator left several seconds of silence between two words, the model sometimes fused them or emitted spurious characters during the long silence. The synthetic training distribution had only ever shown the canonical 7-dit Farnsworth gap (~0.42 s at 20 WPM), so anything beyond that was out-of-domain. v0.5.1 closes that hole with a **single-knob curriculum extension** on top of Phase 5.3 / 5.4:
+
+- **Phase 5.5 — long inter-word silences.** New `OperatorConfig` knob `word_gap_inflation`, a per-utterance multiplier on every Farnsworth inter-word gap, sampled from `U(1.0, 8.0)`. At 20 WPM this stretches the canonical 7-dit space up to ~56 dits (~3.4 s of silence between two words). Fine-tune of 15 k steps from `phase5_4/last` (LR 5e-5, bf16). All other knobs (jitter, dash:dot ratio, gap inflation, channel, text mix, empty-sample prior) kept identical to Phase 5.3 / 5.4 — strict ablation.
+
+Eight artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
+
+| file | params | vocab | description | recommended |
+|---|---|---|---|---|
+| `rnnt_phase5_5.pt` | 4.13 M | **49** | **v0.5.1 acoustic — Phase 5.5 (long inter-word silences) on top of v0.5.0.** | ✅ |
+| `lm_phase5_2.pt` | 4.76 M | 49 | v0.4.1 LM, unchanged. Use at λ_lm = 0.7 for fusion. | ✅ |
+| `rnnt_phase5_4.pt` | 4.13 M | 49 | v0.5.0 acoustic — Phase 5.3 + 5.4. Kept for diff. | |
+| `rnnt_phase3_5.pt` | 4.13 M | 49 | v0.4.0 / v0.4.1 acoustic — synthetic-only. Kept for diff. | |
+| `lm_phase4_0.pt` | 4.76 M | 46 | Legacy v0.1-era LM, ham-radio-only mix. | |
+| `rnnt_phase3_3.pt` | 4.13 M | 46 | v0.3 acoustic. | |
+| `rnnt_phase3_2.pt` | 4.13 M | 46 | v0.2 acoustic. | |
+| `rnnt_phase3_0.pt` | 4.13 M | 46 | v0.1 acoustic. | |
+
+### What's new in v0.5.1
+
+| Bench | v0.5.0 (`phase5_4/last`) | **v0.5.1 (`phase5_5/last`)** |
+|---|---|---|
+| **`bench_word_gap` 25 WPM, SNR 20 dB, 30 short pairs, 6× inter-word silence** | 8 / 30 word_acc, 17.4 % CER | **27 / 30 word_acc, 1.5 % CER** |
+| **`bench_word_gap` same, 4× inter-word silence** | 20 / 30 word_acc, 7.7 % CER | **28 / 30 word_acc, 0.8 % CER** |
+| **Alice ebook2cw prose, n=120 score≥0.5, greedy** | 18.82 % CER | **16.39 % CER** (−2.4 pp) |
+| **`test_manu.wav` Wordsworth, hand-keyed, threshold 0.6** | 26.5 % CER | **23.5 % CER** (−3.0 pp) |
+| **Synthetic FR-mix overall CER (240 samples, clean → −5 dB)** | 0.68 % | 1.12 % (regression confined to −5 dB; clean → 0 dB stay at 0 %) |
+| **Synthetic FR é / à / ' precision** | 100 / 100 / 100 % | 100 / 100 / 100 % (recall 100 / 100 / 98.3 %) |
+| **FP bench, threshold 0.6** | 0.00 chars / sample | 0.01 chars / sample (within noise) |
+
+### Limitations of v0.5.1
+
+- The single regression is on synthetic French at SNR = −5 dB (4.08 % → 6.71 %). Clean-to-0-dB FR is still 0 % CER, accent tokens preserved.
+- Same `decode_live` streaming caveat as v0.4.1+: LM fusion is offline only.
+- Same recommended decode as v0.5.0 (offline fusion `--fusion-weight 0.7`, streaming greedy with `--confidence-threshold 0.6`), just point at `rnnt_phase5_5.pt` instead of `rnnt_phase5_4.pt`.
+
 ## Release v0.5.0
 
 The v0.4.1 acoustic was synthetic-only and tripped on real human keying — the live test surfaced systematic stutter (`F = ..-.` decoded as `A + V`, repeated emissions like `WWWVVUT`) on hand-keyed audio. v0.5.0 fixes the acoustic model itself with **two new training stages on top of v0.4.0's Phase 3.5**:
@@ -60,18 +97,6 @@ The v0.4.1 acoustic was synthetic-only and tripped on real human keying — the 
 - **Phase 5.3 — wider operator-timing envelope.** New `OperatorConfig` knobs `dash_dot_ratio` (sampled per utterance from `U(2.5, 4.5)`, was a fixed `3.0`) and `gap_inflation` (`U(0.8, 1.6)` multiplicative on inter-element gaps, was identity). Element-jitter widened to `U(0, 0.30)` and gap-jitter to `U(0, 0.50)` (was `(0, 0.15)` / `(0, 0.25)`). Fine-tune of 15 k steps from `phase3_5/best`.
 
 - **Phase 5.4 — real-audio mix.** Bootstrap from `phase5_3/best`, fine-tune 12 k steps with **30 % of every batch drawn from real human-keyed audio** (42 ground-truth-aligned 6 s chunks of contest exchanges + random sequences + Wordsworth's *Daffodils*, aligned via `scripts/align_ebook_cw.py` against a hand-written transcript). The synthetic 70 % keeps Phase 5.3's wider-envelope curriculum so the model does not regress on the synthetic distribution.
-
-Seven artifacts on [🤗 sderhy/morseformer](https://huggingface.co/sderhy/morseformer):
-
-| file | params | vocab | description | recommended |
-|---|---|---|---|---|
-| `rnnt_phase5_4.pt` | 4.13 M | **49** | **v0.5.0 acoustic — Phase 5.3 (wider jitter / dash:dot ratio) + Phase 5.4 (real-audio mix).** | ✅ |
-| `lm_phase5_2.pt` | 4.76 M | 49 | v0.4.1 LM, unchanged. Use at λ_lm = 0.7 for fusion. | ✅ |
-| `rnnt_phase3_5.pt` | 4.13 M | 49 | v0.4.0 / v0.4.1 acoustic — synthetic-only. Kept for diff. | |
-| `lm_phase4_0.pt` | 4.76 M | 46 | Legacy v0.1-era LM, ham-radio-only mix. | |
-| `rnnt_phase3_3.pt` | 4.13 M | 46 | v0.3 acoustic. | |
-| `rnnt_phase3_2.pt` | 4.13 M | 46 | v0.2 acoustic. | |
-| `rnnt_phase3_0.pt` | 4.13 M | 46 | v0.1 acoustic. | |
 
 ### What's new in v0.5.0
 

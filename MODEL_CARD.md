@@ -60,7 +60,26 @@ model-index:
 - **Languages on input**: English plus a multilingual prose mix in French, German, and Spanish. **French is now first-class**: É, À, and apostrophe are tokenized natively (Phase 3.4 vocabulary extension); other diacritics still ASCII-normalised (è / ê / ç → E / E / C, German umlauts → AE/OE/UE/SS).
 - **Output vocabulary**: **49 tokens** (A–Z, 0–9, space, `. , ? ! / = + -`, plus `É À '`).
 
-This repository hosts the **v0.5.0 release** of morseformer. The recommended acoustic checkpoint is now `rnnt_phase5_4.pt` (4.13 M params, 49-vocab), trained from `phase3_5/best` through two new fine-tune stages designed to absorb real human-keying timing characteristics that the synthetic-only v0.4.x kept tripping over. The v0.4.1 LM (`lm_phase5_2.pt`) and the offline-fusion recipe are unchanged.
+This repository hosts the **v0.5.1 release** of morseformer. The recommended acoustic checkpoint is now `rnnt_phase5_5.pt` (4.13 M params, 49-vocab), a single-knob extension of the v0.5.0 acoustic that closes one residual live-test failure mode: prolonged silence between two words (slow / hesitant operator) sometimes caused word fusion or hallucinations during the silence. The v0.4.1 LM (`lm_phase5_2.pt`) and the offline-fusion recipe are unchanged.
+
+## What's new in v0.5.1
+
+The v0.5.0 live test surfaced one remaining failure mode: when several seconds of silence sat between two words, the model occasionally fused them or emitted spurious characters during the silence. Diagnosis: the synthetic training distribution had only ever shown the canonical 7-dit Farnsworth gap (~0.42 s at 20 WPM), so longer silences were out-of-domain. The acoustic head, asked to decode something it had never seen, behaved as if every silence longer than 7 dits was the start of a new emission.
+
+- **`rnnt_phase5_5.pt`** — new recommended acoustic. Bootstrap chain: `phase3_5/best → phase5_3/best → phase5_4/last → phase5_5/last`.
+  - **Phase 5.5 (15 k steps)** introduces one new `OperatorConfig` knob: `word_gap_inflation`, a per-utterance multiplier on every Farnsworth inter-word gap, sampled from `U(1.0, 8.0)`. At 20 WPM this stretches the canonical 7-dit space up to ~56 dits (~3.4 s of silence between two words). All other knobs (jitter, dash:dot ratio, gap inflation, channel, text mix, empty-sample prior) are kept identical to Phase 5.3 / 5.4 — strict ablation.
+- The targeted bench (`scripts/bench_word_gap.py`, 30 short word pairs at 25 WPM, SNR 20 dB):
+  - At 6× inflation (~2 s of inter-word silence): word recall **8 / 30 → 27 / 30**, CER **17.4 % → 1.5 %**.
+  - At 4× inflation: word recall **20 / 30 → 28 / 30**, CER **7.7 % → 0.8 %**.
+  - At 1× / 2×: 30 / 30 word recall preserved, CER 0 %.
+- Out-of-domain wins are preserved: Alice ebook2cw (n=120, score≥0.5, greedy) **18.82 % → 16.39 % CER**. The hand-keyed `test_manu.wav` (Wordsworth, threshold 0.6) drops from **26.5 % → 23.5 % CER** (-11 % relative).
+- False positives stay at zero in `decode_live` mode (threshold 0.6: 0.00 → 0.01 chars/sample). Without the threshold, Phase 5.5 emits ~1.97 chars per silence sample vs 0.28 for v0.5.0 — the v0.4.1+ confidence gate absorbs that entirely.
+
+### Caveats
+
+- The single regression is on synthetic French at SNR = −5 dB (`overall CER 0.68 % → 1.12 %`, with the deficit confined to the −5 dB row: 4.08 % → 6.71 %). Clean-to-0-dB FR remains 0 % CER and É / À / ' precision is preserved at 100 / 100 / 100 % (recall 100 / 100 / 98.3 %).
+- The synthetic validation set saturates at ~0 % CER for the 5.5 acoustic (a known dormant `ValidationConfig.matching()` bug since Phase 4.0b — operator ranges are not propagated to the val set). The real signal is `bench_word_gap.py`, the Alice prose bench, and the live `test_manu` audio. `best_rnnt.pt` in `checkpoints/phase5_5/` is therefore frozen at step 1000 by the saturated val signal — **`last.pt` is the released checkpoint**.
+- ILME / density-ratio fusion is still catastrophic on this distribution; do **not** pass `--ilm-weight > 0`.
 
 ## What's new in v0.5.0
 
@@ -100,8 +119,9 @@ The motivating live test (2026-05-02) was a 7-minute hand-keyed `test.wav` with 
 
 | file | params | vocab | description | recommended |
 |---|---|---|---|---|
-| `rnnt_phase5_4.pt` | 4.13 M | **49** | **v0.5.0 acoustic — Phase 5.3 (wider jitter + dash:dot ratio randomisation) + Phase 5.4 (30 % real-audio mix from human keying).** | ✅ |
+| `rnnt_phase5_5.pt` | 4.13 M | **49** | **v0.5.1 acoustic — Phase 5.5 (long inter-word silences) on top of v0.5.0.** | ✅ |
 | `lm_phase5_2.pt`   | 4.76 M | **49** | v0.4.1 LM — matched to the Phase 3.5 text mix (multilingual prose + ham radio). val_ppl 5.626. **Use this for shallow fusion at λ = 0.7.** | ✅ |
+| `rnnt_phase5_4.pt` | 4.13 M | 49 | v0.5.0 acoustic — Phase 5.3 (wider jitter + dash:dot ratio) + Phase 5.4 (30 % real-audio mix). Kept for diff. | |
 | `rnnt_phase3_5.pt` | 4.13 M | 49 | v0.4.0 / v0.4.1 acoustic — synthetic-only. Kept for diff. | |
 | `lm_phase4_0.pt`   | 4.76 M | 46 | Legacy v0.1-era LM, 100 % ham-radio text mix. Kept for research / reproducibility; **not recommended for fusion**. | |
 | `rnnt_phase3_3.pt` | 4.13 M | 46 | v0.3 acoustic model — multilingual ASCII-normalised prose. No accent tokens. | |
@@ -135,10 +155,10 @@ git clone https://github.com/sderhy/morseformer
 cd morseformer
 pip install -e ".[audio]"
 
-# Download the v0.5.0 checkpoints
+# Download the v0.5.1 checkpoints
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase5_4.pt \
-    --local-dir checkpoints/phase5_4
+hf download sderhy/morseformer rnnt_phase5_5.pt \
+    --local-dir checkpoints/phase5_5
 hf download sderhy/morseformer lm_phase5_2.pt \
     --local-dir checkpoints/lm_phase5_2
 
@@ -146,20 +166,20 @@ hf download sderhy/morseformer lm_phase5_2.pt \
 # The threshold gate runs on the acoustic head, so it suppresses noise
 # even when fusion is on.
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt    checkpoints/phase5_4/rnnt_phase5_4.pt \
+    --ckpt    checkpoints/phase5_5/rnnt_phase5_5.pt \
     --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
     --fusion-weight 0.7 \
     --confidence-threshold 0.6
 
 # Or acoustic-only (no LM, no gating — fastest, smallest deps).
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
+    --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
 ```
 
 ### Real-time streaming decode
 
 ```bash
-python -m scripts.decode_live --ckpt checkpoints/phase5_4/rnnt_phase5_4.pt
+python -m scripts.decode_live --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
 ```
 
 Tune your receiver to zero-beat at 600 Hz with a ≈ 500 Hz CW filter. `Ctrl+C` to quit. Latency is ~4 s end-to-end. v0.4.1 ships `--confidence-threshold 0.6` as the default, which kills 90 % of noise-driven false positives (FP mean 1.50 → 0.17 chars per noise sample); pass `--confidence-threshold 0.0` to recover the v0.4.0 streaming behaviour exactly. **LM fusion is offline-only in v0.4.1**: the streaming decoder still uses the acoustic-only greedy path. Plumbing fusion through the central-zone-commit logic is a separate piece of work earmarked for a follow-up release.
@@ -289,7 +309,7 @@ Training budget for v0.4 (everything, Phase 0 → Phase 3.5): roughly 76 h of si
 
 ## Technical specifications
 
-**Acoustic model** (`rnnt_phase5_4.pt`, 4.13 M params, identical architecture to v0.1 / v0.2 / v0.3 except for the wider output head; v0.5.0 differs from v0.4.x only in training data):
+**Acoustic model** (`rnnt_phase5_5.pt`, 4.13 M params, identical architecture to v0.1 / v0.2 / v0.3 except for the wider output head; v0.5.x differs from v0.4.x only in training data):
 - Encoder: Conformer d=144, L=8, H=4, ff_expansion=4, conv_kernel=31, RoPE, LayerNorm conv, 4× subsample
 - CTC head: Linear(144 → 49)
 - PredictionNetwork: Embedding(49, 128) + LSTM(128, 128, 1 layer)
@@ -304,11 +324,11 @@ Training budget for v0.4 (everything, Phase 0 → Phase 3.5): roughly 76 h of si
 ## Citation
 
 ```bibtex
-@software{morseformer_v0_5_0_2026,
+@software{morseformer_v0_5_1_2026,
   author       = {Derhy, Serge},
   title        = {morseformer: open-source transformer-based Morse / CW decoder},
   year         = 2026,
-  version      = {v0.5.0},
+  version      = {v0.5.1},
   url          = {https://github.com/sderhy/morseformer},
   howpublished = {\url{https://huggingface.co/sderhy/morseformer}},
 }
