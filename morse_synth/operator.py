@@ -50,6 +50,15 @@ class OperatorConfig:
                              gaps (slow / weighted operator); < 1 tightens.
                              Phase 5.3 samples this in roughly [0.8, 1.6] to
                              cover keyers with a heavy "release" bias.
+        word_gap_inflation:  Multiplicative bias on every inter-word gap
+                             after jitter. ``1.0`` = canonical 7-dit space;
+                             > 1 simulates an operator who hesitates between
+                             words (8× ≈ 56 dits ≈ 3.4 s at 20 WPM). The v0.5.0
+                             live test surfaced cases where prolonged silence
+                             between words did not trigger a SPACE emission
+                             because the synthetic training distribution
+                             only ever saw 7-dit gaps. Phase 5.5 samples this
+                             in [1.0, 8.0] to cover slow / hesitant keying.
         seed:                Optional integer seed for reproducibility.
     """
 
@@ -60,6 +69,7 @@ class OperatorConfig:
     farnsworth_word_gap: float = 7.0
     dash_dot_ratio: float = 3.0
     gap_inflation: float = 1.0
+    word_gap_inflation: float = 1.0
     seed: int | None = None
 
 
@@ -98,12 +108,13 @@ def build_events(text: str, cfg: OperatorConfig | None = None) -> list[Event]:
     # bias inside the same character.
     dash_units = max(1.0, cfg.dash_dot_ratio)
     inflation = max(0.1, cfg.gap_inflation)
+    word_inflation = max(0.1, cfg.word_gap_inflation)
 
     events: list[Event] = []
     words = text.upper().split()
     for word_i, word in enumerate(words):
         if word_i > 0:
-            gap_units = jitter_units(cfg.farnsworth_word_gap, cfg.gap_jitter)
+            gap_units = jitter_units(cfg.farnsworth_word_gap, cfg.gap_jitter) * word_inflation
             events.append((False, gap_units * u))
         for char_i, ch in enumerate(word):
             code = MORSE_TABLE.get(ch)

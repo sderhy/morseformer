@@ -181,6 +181,7 @@ def _build_french_validation_set(
     cfg = _Cfg()
     cfg.target_duration_s = target_duration_s
     cfg.sample_rate = sample_rate
+    cfg.target_samples = target_samples
     cfg.freq_hz = freq_hz
     cfg.keying = keying
 

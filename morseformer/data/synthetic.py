@@ -173,6 +173,15 @@ class DatasetConfig:
     # look like `.-` + `...-` (A + V). 1.0 = identity.
     operator_dash_dot_ratio_range: tuple[float, float] = (3.0, 3.0)
     operator_gap_inflation_range: tuple[float, float] = (1.0, 1.0)
+    # --- Phase 5.5 extension: inter-word silence inflation ---
+    # Multiplicative bias on the inter-word (Farnsworth) gap, sampled
+    # per utterance from U(lo, hi). 1.0 = canonical 7-dit space; values
+    # up to 8.0 simulate an operator who hesitates between words
+    # (≈ 3.4 s of silence at 20 WPM). Closes the v0.5.0 live-test failure
+    # mode where prolonged silences mid-phrase did not trigger SPACE
+    # because no training sample had ever shown an inflated word gap.
+    # (1.0, 1.0) = legacy behaviour (Phase 5.3 / 5.4).
+    operator_word_gap_inflation_range: tuple[float, float] = (1.0, 1.0)
 
     # --- Phase 3.1 extensions: richer HF channel, all disabled by default ---
     #
@@ -502,6 +511,50 @@ class DatasetConfig:
         return cls._phase_4_0_base(**base)
 
     @classmethod
+    def phase_5_5(cls, **overrides) -> "DatasetConfig":
+        """Phase 5.5 long-inter-word-silence curriculum.
+
+        Phase 5.3 channel + jitter + dash-ratio + element-gap inflation,
+        plus one new dimension: per-utterance ``operator_word_gap_inflation_range
+        = (1.0, 8.0)``. Each training sample tightens or stretches its
+        inter-word gaps from the canonical 7 dits up to ~56 dits
+        (~3.4 s of silence at 20 WPM).
+
+        Closes the v0.5.0 live-test failure mode where the model did
+        not always emit a SPACE after a prolonged silence between
+        words. Until 5.4 every synthetic sample shipped exactly the
+        7-dit Farnsworth gap (jitter ±0.5 dits), so the network had
+        zero exposure to "silent pause inside a phrase" labelled with
+        a SPACE token. Phase 5.5 fills that hole. Single-knob change
+        on top of 5.3 to keep ablation crisp.
+
+        Bootstrap target: ``checkpoints/phase5_4/last.pt`` — same
+        vocab (49), same channel, same jitter envelope.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            operator_word_gap_inflation_range=(1.0, 8.0),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_4_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
     def phase_5_3(cls, **overrides) -> "DatasetConfig":
         """Phase 5.3 hand-keyed-robustness curriculum.
 
@@ -756,6 +809,11 @@ class SyntheticCWDataset(IterableDataset):
         dash_dot_ratio = 3.0 if hi_r <= lo_r else float(rng.uniform(lo_r, hi_r))
         lo_i, hi_i = self.cfg.operator_gap_inflation_range
         gap_inflation = 1.0 if hi_i <= lo_i else float(rng.uniform(lo_i, hi_i))
+        # Phase 5.5 — per-utterance inter-word gap inflation (operator
+        # hesitation between words). Falls through to 1.0 for legacy
+        # presets where the range is degenerate.
+        lo_w, hi_w = self.cfg.operator_word_gap_inflation_range
+        word_gap_inflation = 1.0 if hi_w <= lo_w else float(rng.uniform(lo_w, hi_w))
         # Derive a per-sample operator seed so that timing is reproducible
         # given the parent RNG state.
         op_seed = int(rng.integers(0, 2**31 - 1))
@@ -765,6 +823,7 @@ class SyntheticCWDataset(IterableDataset):
             gap_jitter=gap_jitter,
             dash_dot_ratio=dash_dot_ratio,
             gap_inflation=gap_inflation,
+            word_gap_inflation=word_gap_inflation,
             seed=op_seed,
         )
 
