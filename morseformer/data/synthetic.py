@@ -214,6 +214,14 @@ class DatasetConfig:
     # labelled with the empty string. Kills the "hallucinate on silence"
     # failure mode observed on real-air audio.
     empty_sample_probability: float = 0.0
+    # Phase 5.6 — when True, the empty-sample machinery samples one of
+    # FOUR sub-modes (pure AWGN / AWGN+QRN / distant weak CW / pseudo-
+    # Morse pulse rhythm) instead of three. The new pseudo-Morse mode
+    # emits clean dots/dashes at the carrier with malformed inter-pulse
+    # gaps so the rhythm does not form a valid character — labelled
+    # empty. Targets the v0.5.1 live failure where the acoustic head
+    # emits confident digits on transitional / weak on-band signal.
+    empty_sample_pseudo_morse_enabled: bool = False
 
     # Phase 3.6 — post-emission silence curriculum. With this
     # probability, draw a *very short* text, render it normally, and
@@ -509,6 +517,49 @@ class DatasetConfig:
         )
         base.update(overrides)
         return cls._phase_4_0_base(**base)
+
+    @classmethod
+    def phase_5_6(cls, **overrides) -> "DatasetConfig":
+        """Phase 5.6 digit-hallucination suppression curriculum.
+
+        Phase 5.5 + two changes:
+        - ``empty_sample_probability`` doubled from 0.20 to 0.40 so the
+          model spends more gradient on the "no decode" hypothesis.
+        - ``empty_sample_pseudo_morse_enabled = True`` — adds a fourth
+          empty-sample mode rendering clean dots/dashes at the carrier
+          with malformed inter-pulse gaps (uniform [0.5, 8] dits). The
+          rhythm rarely lands on a valid character, but the on-band
+          rhythmic energy is exactly what triggers the v0.5.1 live
+          failure (pseudo-numerals like ``061511813`` or ``5'9734``
+          on transitional / weak signal). Labelled empty.
+
+        Single-knob change vs. Phase 5.5 (apart from the new mode flag);
+        bootstrap target ``checkpoints/phase5_5/last.pt``. Same vocab
+        (49), same channel, same operator envelope.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            operator_word_gap_inflation_range=(1.0, 8.0),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.40,
+            empty_sample_pseudo_morse_enabled=True,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_3_4_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
 
     @classmethod
     def phase_5_5(cls, **overrides) -> "DatasetConfig":
@@ -1023,7 +1074,49 @@ class SyntheticCWDataset(IterableDataset):
         cfg = self.cfg
         target_samples = cfg.target_samples
         noise_rms = 0.1
-        mode = int(rng.integers(0, 3))
+        n_modes = 4 if cfg.empty_sample_pseudo_morse_enabled else 3
+        mode = int(rng.integers(0, n_modes))
+
+        if mode == 3:
+            # Phase 5.6 — pseudo-Morse pulse rhythm. Clean dots/dashes at
+            # the carrier frequency with malformed inter-pulse gaps so
+            # the sequence does not form a valid character. Labelled
+            # empty. Forces the acoustic head to commit to "no decode"
+            # on rhythmic on-band noise rather than fall back on a
+            # digit class (the v0.5.1 live failure mode).
+            from morse_synth.keying import render_events
+            from morse_synth.channel import apply_channel
+            wpm = float(rng.uniform(*cfg.wpm_range))
+            unit_s = 1.2 / wpm
+            n_pulses = int(rng.integers(4, 26))
+            events: list[tuple[bool, float]] = []
+            for _ in range(n_pulses):
+                # ON: dot (1 dit) or dash (3 dits) with mild jitter.
+                on_units = (1.0 if rng.random() < 0.5 else 3.0) * float(
+                    rng.uniform(0.85, 1.15)
+                )
+                # OFF: uniform in [0.5, 8] dits — mostly invalid Morse
+                # gaps so the rhythm rarely lands on a valid character.
+                off_units = float(rng.uniform(0.5, 8.0))
+                events.append((True, on_units * unit_s))
+                events.append((False, off_units * unit_s))
+            clean = render_events(
+                events,
+                keying=cfg.keying,
+                freq=cfg.freq_hz,
+                sample_rate=cfg.sample_rate,
+            ).astype(np.float32)
+            clean = _pad_or_truncate(clean, target_samples)
+            ch = ChannelConfig(
+                snr_db=float(rng.uniform(5.0, 25.0)),
+                rx_filter_bw=cfg.rx_filter_bw,
+                rx_filter_centre=cfg.freq_hz,
+                seed=int(rng.integers(0, 2**31 - 1)),
+            )
+            audio = apply_channel(clean, cfg.sample_rate, ch).astype(
+                np.float32
+            )
+            return audio, []
 
         if mode == 2:
             # Distant weak CW: render at the usual carrier and drown it.
