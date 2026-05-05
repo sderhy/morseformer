@@ -40,6 +40,7 @@ import torch
 
 from morseformer.decoding.streaming import StreamingConfig, StreamingDecoder
 from morseformer.models.acoustic import AcousticConfig
+from morseformer.models.lm import GptLM, LmConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
 
@@ -105,6 +106,25 @@ def _load_rnnt(path: Path, device: torch.device) -> RnntModel:
     model.load_state_dict(state)
     model.eval()
     return model
+
+
+def _load_lm(path: Path, device: torch.device, use_ema: bool = True) -> GptLM:
+    ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
+    mcfg = ckpt["config"]["model"]
+    lm_cfg = LmConfig(
+        vocab_size=mcfg["vocab_size"],
+        d_model=mcfg["d_model"], n_heads=mcfg["n_heads"],
+        n_layers=mcfg["n_layers"], dropout=mcfg["dropout"],
+    )
+    lm = GptLM(lm_cfg).to(device)
+    state = dict(ckpt["model"])
+    if use_ema and ckpt.get("ema"):
+        for k, v in ckpt["ema"].items():
+            if k in state:
+                state[k] = v
+    lm.load_state_dict(state)
+    lm.eval()
+    return lm
 
 
 def _open_recorder(capture_rate: int, device_name: str | None):
@@ -188,6 +208,20 @@ def build_parser() -> argparse.ArgumentParser:
                         "the acoustic head emitted confident pseudo-"
                         "numerals (`061511813`, `5'9734`) on noise / weak "
                         "signal. Default 0.90; set to 0.0 to disable.")
+    p.add_argument("--lm-ckpt", type=Path, default=None,
+                   help="optional LM checkpoint for shallow-fusion streaming "
+                        "decode. Default `checkpoints/lm_phase5_2/best.pt` "
+                        "if present. Pair with --fusion-weight; pass "
+                        "--fusion-weight 0 to disable LM rescoring.")
+    p.add_argument("--fusion-weight", type=float, default=0.0,
+                   help="λ_lm for shallow fusion in the streaming path. "
+                        "Default 0.0 (off). Tested on Alice n=120 with "
+                        "the v0.5.2 acoustic: any λ > 0 regressed CER "
+                        "(λ=0.7 added +4 pp) and added ~20× latency. "
+                        "Kept here for experimentation on weaker acoustics "
+                        "or non-English material.")
+    p.add_argument("--lm-temperature", type=float, default=1.0,
+                   help="optional LM softmax temperature; 1.0 = calibrated.")
     p.add_argument("--device", default=None,
                    help="cpu / cuda for inference (default: auto)")
     p.add_argument("--audio-device", default=None,
@@ -220,7 +254,32 @@ def main(argv: list[str] | None = None) -> int:
         confidence_threshold=args.confidence_threshold,
         digit_threshold=digit_thr,
     )
-    sd = StreamingDecoder(model, sd_cfg, device=device)
+
+    # v0.5.3 — optional shallow LM fusion in streaming. Auto-discover the
+    # released LM at the standard path; user can override with --lm-ckpt
+    # or disable with --fusion-weight 0.
+    lm_path = args.lm_ckpt
+    if lm_path is None:
+        for cand in (
+            Path("checkpoints/lm_phase5_2/best.pt"),
+            Path("checkpoints/lm_phase5_2/last.pt"),
+            Path("release/lm_phase5_2.pt"),
+        ):
+            if cand.exists():
+                lm_path = cand
+                break
+    lm: GptLM | None = None
+    if lm_path is not None and args.fusion_weight > 0.0:
+        lm = _load_lm(lm_path, device, use_ema=args.use_ema)
+        print(f"[decode_live] lm: {lm_path} "
+              f"(λ_lm={args.fusion_weight}, T={args.lm_temperature})",
+              file=sys.stderr)
+    sd = StreamingDecoder(
+        model, sd_cfg, device=device,
+        lm=lm,
+        fusion_weight=args.fusion_weight,
+        lm_temperature=args.lm_temperature,
+    )
 
     capture_rate = args.capture_rate
     read_bytes = (

@@ -35,6 +35,11 @@ import torch
 
 from morseformer.core.tokenizer import decode
 from morseformer.features import FrontendConfig, extract_features
+from morseformer.models.fusion import (
+    FusionConfig,
+    greedy_rnnt_decode_with_lm_aligned,
+)
+from morseformer.models.lm import GptLM
 from morseformer.models.rnnt import RnntModel
 
 
@@ -100,6 +105,10 @@ class StreamingDecoder:
         model: RnntModel,
         cfg: StreamingConfig,
         device: torch.device | str = "cpu",
+        *,
+        lm: GptLM | None = None,
+        fusion_weight: float = 0.0,
+        lm_temperature: float = 1.0,
     ) -> None:
         if cfg.sample_rate % cfg.frame_rate != 0:
             raise ValueError(
@@ -115,6 +124,22 @@ class StreamingDecoder:
         self.model = model
         self.cfg = cfg
         self.device = torch.device(device)
+        # Phase 5.7 / v0.5.3 — optional shallow LM fusion in the
+        # streaming path. ``lm = None`` keeps the v0.5.2 acoustic-only
+        # behaviour. When a LM is provided, every window goes through
+        # :func:`greedy_rnnt_decode_with_lm_aligned` so the central-zone-
+        # commit logic still receives ``[(token, frame_idx), ...]``.
+        self.lm = lm
+        self._fusion_cfg: FusionConfig | None = None
+        if lm is not None and fusion_weight > 0.0:
+            self._fusion_cfg = FusionConfig(
+                fusion_weight=fusion_weight,
+                ilm_weight=0.0,
+                max_emit_per_frame=cfg.max_emit_per_frame,
+                lm_temperature=lm_temperature,
+                confidence_threshold=cfg.confidence_threshold,
+                digit_threshold=cfg.digit_threshold,
+            )
 
         self._fcfg = FrontendConfig(
             tone_freq=cfg.carrier_hz,
@@ -231,13 +256,18 @@ class StreamingDecoder:
             [feats.shape[0]], dtype=torch.long, device=self.device
         )
         with torch.no_grad():
-            aligned = self.model.greedy_rnnt_decode_aligned(
-                x,
-                lengths,
-                max_emit_per_frame=self.cfg.max_emit_per_frame,
-                confidence_threshold=self.cfg.confidence_threshold,
-                digit_threshold=self.cfg.digit_threshold,
-            )[0]
+            if self._fusion_cfg is not None and self.lm is not None:
+                aligned = greedy_rnnt_decode_with_lm_aligned(
+                    self.model, self.lm, x, lengths, self._fusion_cfg,
+                )[0]
+            else:
+                aligned = self.model.greedy_rnnt_decode_aligned(
+                    x,
+                    lengths,
+                    max_emit_per_frame=self.cfg.max_emit_per_frame,
+                    confidence_threshold=self.cfg.confidence_threshold,
+                    digit_threshold=self.cfg.digit_threshold,
+                )[0]
 
         commit_lo, commit_hi = self._commit_zone_samples(
             window_start_samples=window_start_samples,

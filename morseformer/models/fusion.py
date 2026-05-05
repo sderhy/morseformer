@@ -69,6 +69,16 @@ class FusionConfig:
     # this preserves the noise/false-positive suppression that
     # threshold 0.6 buys at decode time. ``0.0`` disables gating.
     confidence_threshold: float = 0.0
+    # Phase 5.6 inference fix: stricter gate on digit tokens (0-9) to
+    # suppress the v0.5.1 live failure where pseudo-numerals leaked
+    # through the regular threshold. Applied to the *acoustic* head
+    # exactly like ``confidence_threshold``, before fusion. ``None``
+    # disables the override.
+    digit_threshold: float | None = None
+
+
+# Vocab indices for digits 0-9 (see morseformer.core.tokenizer).
+_DIGIT_INDICES: frozenset[int] = frozenset(range(28, 38))
 
 
 @torch.no_grad()
@@ -122,6 +132,7 @@ def greedy_rnnt_decode_with_lm(
             features, lengths,
             max_emit_per_frame=cfg.max_emit_per_frame,
             confidence_threshold=cfg.confidence_threshold,
+            digit_threshold=cfg.digit_threshold,
         )
 
     rnnt_vocab = rnnt.cfg.vocab_size
@@ -198,16 +209,24 @@ def greedy_rnnt_decode_with_lm(
                 # before computing LM logprobs so we skip the LM
                 # forward on dropped frames (perf win on noise-heavy
                 # audio).
-                if cfg.confidence_threshold > 0.0:
+                if cfg.confidence_threshold > 0.0 or cfg.digit_threshold is not None:
                     ac_probs = ac_logprobs.exp()
                     ac_top_tok = int(ac_probs.argmax().item())
-                    if (
-                        ac_top_tok != blank
-                        and float(ac_probs[ac_top_tok].item())
-                        < cfg.confidence_threshold
-                    ):
-                        # Treat as blank, advance frame.
-                        break
+                    if ac_top_tok != blank:
+                        thr = (
+                            cfg.digit_threshold
+                            if (
+                                ac_top_tok in _DIGIT_INDICES
+                                and cfg.digit_threshold is not None
+                            )
+                            else cfg.confidence_threshold
+                        )
+                        if (
+                            thr > 0.0
+                            and float(ac_probs[ac_top_tok].item()) < thr
+                        ):
+                            # Treat as blank, advance frame.
+                            break
 
                 # Feed the emitted history (with BOS=EOS=blank sentinel)
                 # to the LM and take log-probs at the final position.
@@ -247,6 +266,152 @@ def greedy_rnnt_decode_with_lm(
                 if tok == blank:
                     break
                 hyp.append(tok)
+                prev_token = torch.tensor(
+                    [[tok]], dtype=torch.long, device=enc_out.device
+                )
+                pred_out, pred_state = rnnt.pred.step(prev_token, pred_state)
+                emitted += 1
+        results.append(hyp)
+    return results
+
+
+@torch.no_grad()
+def greedy_rnnt_decode_with_lm_aligned(
+    rnnt: RnntModel,
+    lm: GptLM,
+    features: torch.Tensor,
+    lengths: torch.Tensor | None = None,
+    fusion_cfg: FusionConfig | None = None,
+) -> list[list[tuple[int, int]]]:
+    """Aligned variant of :func:`greedy_rnnt_decode_with_lm`.
+
+    Same shallow-fusion / ILME decoding logic, but each emission is
+    tagged with the encoder frame at which it was committed. Used by
+    :class:`morseformer.decoding.streaming.StreamingDecoder` so that
+    the central-zone-commit logic can window committed tokens by audio
+    timestamp.
+
+    Returns a list (one per batch item) of ``[(token, frame_idx), ...]``.
+    """
+    cfg = fusion_cfg or FusionConfig()
+    rnnt.eval()
+    lm.eval()
+
+    if cfg.fusion_weight == 0.0 and cfg.ilm_weight == 0.0:
+        return rnnt.greedy_rnnt_decode_aligned(
+            features, lengths,
+            max_emit_per_frame=cfg.max_emit_per_frame,
+            confidence_threshold=cfg.confidence_threshold,
+            digit_threshold=cfg.digit_threshold,
+        )
+
+    rnnt_vocab = rnnt.cfg.vocab_size
+    lm_vocab = lm.cfg.vocab_size
+    if lm_vocab > rnnt_vocab:
+        raise ValueError(
+            f"vocab-size mismatch: lm={lm_vocab} > rnnt={rnnt_vocab}. "
+            "LM must share the RNN-T's leading vocabulary indices."
+        )
+    vocab_pad = rnnt_vocab - lm_vocab
+
+    enc_out, enc_lengths = rnnt.acoustic.encode(features, lengths)
+    b, t_max, _ = enc_out.shape
+    if enc_lengths is None:
+        enc_lengths = torch.full(
+            (b,), t_max, device=enc_out.device, dtype=torch.long
+        )
+
+    blank = rnnt.cfg.blank_index
+    vocab_size = rnnt_vocab
+    results: list[list[tuple[int, int]]] = []
+
+    non_blank_mask = torch.ones(vocab_size, device=enc_out.device)
+    non_blank_mask[blank] = 0.0
+
+    use_ilm = cfg.ilm_weight != 0.0
+    zero_frame = (
+        torch.zeros(
+            (1, 1, enc_out.size(-1)),
+            device=enc_out.device,
+            dtype=enc_out.dtype,
+        )
+        if use_ilm
+        else None
+    )
+
+    for i in range(b):
+        t_valid = int(enc_lengths[i].item())
+        hyp: list[tuple[int, int]] = []
+        # Token-only running history for the LM context (BOS prepended
+        # at each call).
+        hyp_tokens: list[int] = []
+        pred_state: tuple[torch.Tensor, torch.Tensor] | None = None
+        prev_token = torch.tensor(
+            [[blank]], dtype=torch.long, device=enc_out.device
+        )
+        pred_out, pred_state = rnnt.pred.step(prev_token, pred_state)
+
+        for t in range(t_valid):
+            emitted = 0
+            while emitted < cfg.max_emit_per_frame:
+                f = enc_out[i : i + 1, t : t + 1, :]
+                logits = rnnt.joint(f, pred_out)
+                ac_logprobs = F.log_softmax(
+                    logits[0, 0, 0].float(), dim=-1
+                )
+
+                if cfg.confidence_threshold > 0.0 or cfg.digit_threshold is not None:
+                    ac_probs = ac_logprobs.exp()
+                    ac_top_tok = int(ac_probs.argmax().item())
+                    if ac_top_tok != blank:
+                        thr = (
+                            cfg.digit_threshold
+                            if (
+                                ac_top_tok in _DIGIT_INDICES
+                                and cfg.digit_threshold is not None
+                            )
+                            else cfg.confidence_threshold
+                        )
+                        if (
+                            thr > 0.0
+                            and float(ac_probs[ac_top_tok].item()) < thr
+                        ):
+                            break
+
+                lm_input = torch.tensor(
+                    [[EOS_INDEX] + hyp_tokens], dtype=torch.long,
+                    device=enc_out.device,
+                )
+                lm_logits, _ = lm(lm_input)
+                lm_logprobs = F.log_softmax(
+                    lm_logits[0, -1, :].float() / max(cfg.lm_temperature, 1e-6),
+                    dim=-1,
+                )
+                if vocab_pad > 0:
+                    pad = torch.full(
+                        (vocab_pad,),
+                        float("-inf"),
+                        device=lm_logprobs.device,
+                        dtype=lm_logprobs.dtype,
+                    )
+                    lm_logprobs = torch.cat([lm_logprobs, pad], dim=0)
+
+                fused = ac_logprobs + cfg.fusion_weight * (
+                    lm_logprobs * non_blank_mask
+                )
+                if use_ilm:
+                    ilm_logits = rnnt.joint(zero_frame, pred_out)
+                    ilm_logprobs = F.log_softmax(
+                        ilm_logits[0, 0, 0].float(), dim=-1
+                    )
+                    fused = fused - cfg.ilm_weight * (
+                        ilm_logprobs * non_blank_mask
+                    )
+                tok = int(fused.argmax().item())
+                if tok == blank:
+                    break
+                hyp.append((tok, t))
+                hyp_tokens.append(tok)
                 prev_token = torch.tensor(
                     [[tok]], dtype=torch.long, device=enc_out.device
                 )
