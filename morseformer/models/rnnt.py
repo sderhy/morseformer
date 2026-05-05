@@ -266,6 +266,7 @@ class RnntModel(nn.Module):
         lengths: torch.Tensor | None = None,
         max_emit_per_frame: int = 5,
         confidence_threshold: float = 0.0,
+        digit_threshold: float | None = None,
     ) -> list[list[int]]:
         """Greedy RNN-T decoding: for each encoder frame, emit tokens
         until the joint predicts blank, then advance.
@@ -277,6 +278,7 @@ class RnntModel(nn.Module):
             lengths,
             max_emit_per_frame=max_emit_per_frame,
             confidence_threshold=confidence_threshold,
+            digit_threshold=digit_threshold,
         )
         return [[tok for tok, _ in h] for h in aligned]
 
@@ -287,6 +289,7 @@ class RnntModel(nn.Module):
         lengths: torch.Tensor | None = None,
         max_emit_per_frame: int = 5,
         confidence_threshold: float = 0.0,
+        digit_threshold: float | None = None,
     ) -> list[list[tuple[int, int]]]:
         """Greedy RNN-T decoding that also returns the encoder frame
         index at which each non-blank token was emitted.
@@ -303,6 +306,14 @@ class RnntModel(nn.Module):
         suppresses the silence-hallucination "letter soup" failure mode
         without retraining.
 
+        ``digit_threshold`` (optional, in [0, 1]) is a class-conditional
+        override: if set, digit tokens (0-9) are gated at this stricter
+        threshold instead of ``confidence_threshold``. Targets the v0.5.1
+        live failure where the acoustic head emits confident pseudo-
+        numerals (``061511813``, ``5'9734``) on noise / weak signal.
+        ``None`` disables the override (digits gate at the same
+        threshold as letters).
+
         Used by the streaming decoder to convert per-token emissions into
         absolute audio timestamps so a sliding-window loop can commit only
         the central zone of each window without re-emitting tokens.
@@ -316,6 +327,9 @@ class RnntModel(nn.Module):
             enc_lengths = torch.full((b,), t_max, device=enc_out.device, dtype=torch.long)
 
         blank = self.cfg.blank_index
+        # Phase 5.6 inference-only fix: stricter threshold on digits.
+        # Vocab indices 28..37 are 0-9 (see morseformer.core.tokenizer).
+        digit_indices: set[int] = set(range(28, 38)) if digit_threshold is not None else set()
         results: list[list[tuple[int, int]]] = []
         for i in range(b):
             t_valid = int(enc_lengths[i].item())
@@ -330,12 +344,18 @@ class RnntModel(nn.Module):
                 while emitted < max_emit_per_frame:
                     f = enc_out[i : i + 1, t : t + 1, :]          # [1, 1, d_enc]
                     logits = self.joint(f, pred_out)               # [1, 1, 1, V]
-                    if confidence_threshold > 0.0:
+                    if confidence_threshold > 0.0 or digit_threshold is not None:
                         probs = torch.softmax(logits[0, 0, 0], dim=-1)
                         tok = int(probs.argmax().item())
                         # Below-threshold non-blank → treat as blank.
-                        if tok != blank and probs[tok].item() < confidence_threshold:
-                            break
+                        if tok != blank:
+                            thr = (
+                                digit_threshold
+                                if (tok in digit_indices and digit_threshold is not None)
+                                else confidence_threshold
+                            )
+                            if thr > 0.0 and probs[tok].item() < thr:
+                                break
                     else:
                         tok = int(logits[0, 0, 0].argmax().item())
                     if tok == blank:

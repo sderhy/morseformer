@@ -77,6 +77,11 @@ class StreamingConfig:
     bandwidth_hz: float = 200.0
     max_emit_per_frame: int = 5
     confidence_threshold: float = 0.0
+    # Phase 5.6 inference-only fix: stricter gate on digits (0-9) to
+    # suppress the v0.5.1 live failure where pseudo-numerals (e.g.
+    # ``061511813``, ``5'9734``) leak through the regular threshold.
+    # ``None`` disables the override.
+    digit_threshold: float | None = None
 
 
 class StreamingDecoder:
@@ -231,6 +236,7 @@ class StreamingDecoder:
                 lengths,
                 max_emit_per_frame=self.cfg.max_emit_per_frame,
                 confidence_threshold=self.cfg.confidence_threshold,
+                digit_threshold=self.cfg.digit_threshold,
             )[0]
 
         commit_lo, commit_hi = self._commit_zone_samples(

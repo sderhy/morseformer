@@ -97,6 +97,7 @@ def _score(
     confidence_threshold: float,
     lm: GptLM | None = None,
     fusion_weight: float = 0.0,
+    digit_threshold: float | None = None,
 ) -> list[list[int]]:
     """Return a list (3 modes) of per-sample emission counts.
 
@@ -126,6 +127,7 @@ def _score(
                 hyps = model.greedy_rnnt_decode(
                     features, lengths,
                     confidence_threshold=confidence_threshold,
+                    digit_threshold=digit_threshold,
                 )
         for j, hyp in enumerate(hyps):
             mode = (i + j) // n_per_mode
@@ -198,6 +200,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--device", default=None)
     p.add_argument("--confidence-threshold", type=float, default=0.0,
                    help="optional inference-time RNN-T conf threshold")
+    p.add_argument("--digit-threshold", type=float, default=None,
+                   help="optional stricter threshold applied only to digit "
+                        "tokens (0-9). v0.5.1+ live failure mode = pseudo-"
+                        "numerals on noise / weak signal; setting this in "
+                        "[0.85, 0.95] suppresses them without retraining.")
     p.add_argument("--lm-ckpt", type=Path, default=None,
                    help="optional LM checkpoint for shallow-fusion decoding "
                         "(applied to candidate model only).")
@@ -231,6 +238,7 @@ def main(argv: list[str] | None = None) -> int:
         candidate, samples, device, args.batch_size,
         args.n_per_mode, args.confidence_threshold,
         lm=lm, fusion_weight=args.fusion_weight,
+        digit_threshold=args.digit_threshold,
     )
     print()
     cand_label = (
@@ -246,6 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         base_per_mode = _score(
             baseline, samples, device, args.batch_size,
             args.n_per_mode, args.confidence_threshold,
+            digit_threshold=args.digit_threshold,
         )
         print()
         print(_summary(f"baseline ({args.baseline_ckpt.name})", base_per_mode))

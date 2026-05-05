@@ -148,6 +148,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "Stacks with --fusion-weight: gating still "
                         "happens on the acoustic head, so the LM cannot "
                         "rescue noise-driven low-confidence emissions.")
+    p.add_argument("--digit-threshold", type=float, default=None,
+                   help="optional stricter threshold applied only to "
+                        "digit tokens (0-9). Targets the v0.5.1 pseudo-"
+                        "numeral failure mode (`061511813`, `5'9734`). "
+                        "Recommended setting: 0.90. None = digits gate "
+                        "at the same level as letters.")
     return p
 
 
@@ -276,6 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                     rnnt_tokens = model.greedy_rnnt_decode(
                         x, lengths,
                         confidence_threshold=args.confidence_threshold,
+                        digit_threshold=args.digit_threshold,
                     )[0]
                 rnnt_parts.append(decode(rnnt_tokens))
             else:

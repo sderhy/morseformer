@@ -182,6 +182,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "down to -5 dB SNR. Try 0.7 for zero noise-FP at "
                         "the cost of slightly tighter margin on chunk "
                         "boundaries; 0.0 to disable entirely.")
+    p.add_argument("--digit-threshold", type=float, default=0.90,
+                   help="stricter threshold applied only to digit tokens "
+                        "(0-9). Targets the v0.5.1 live failure mode where "
+                        "the acoustic head emitted confident pseudo-"
+                        "numerals (`061511813`, `5'9734`) on noise / weak "
+                        "signal. Default 0.90; set to 0.0 to disable.")
     p.add_argument("--device", default=None,
                    help="cpu / cuda for inference (default: auto)")
     p.add_argument("--audio-device", default=None,
@@ -203,6 +209,7 @@ def main(argv: list[str] | None = None) -> int:
     model = _load_rnnt(ckpt_path, device)
     n_params = sum(p.numel() for p in model.parameters())
 
+    digit_thr = args.digit_threshold if args.digit_threshold and args.digit_threshold > 0.0 else None
     sd_cfg = StreamingConfig(
         window_seconds=args.window_seconds,
         hop_seconds=args.hop_seconds,
@@ -211,6 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         carrier_hz=args.carrier,
         bandwidth_hz=args.bandwidth,
         confidence_threshold=args.confidence_threshold,
+        digit_threshold=digit_thr,
     )
     sd = StreamingDecoder(model, sd_cfg, device=device)
 
