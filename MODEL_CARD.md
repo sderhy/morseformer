@@ -60,7 +60,21 @@ model-index:
 - **Languages on input**: English plus a multilingual prose mix in French, German, and Spanish. **French is now first-class**: É, À, and apostrophe are tokenized natively (Phase 3.4 vocabulary extension); other diacritics still ASCII-normalised (è / ê / ç → E / E / C, German umlauts → AE/OE/UE/SS).
 - **Output vocabulary**: **49 tokens** (A–Z, 0–9, space, `. , ? ! / = + -`, plus `É À '`).
 
-This repository hosts the **v0.5.1 release** of morseformer. The recommended acoustic checkpoint is now `rnnt_phase5_5.pt` (4.13 M params, 49-vocab), a single-knob extension of the v0.5.0 acoustic that closes one residual live-test failure mode: prolonged silence between two words (slow / hesitant operator) sometimes caused word fusion or hallucinations during the silence. The v0.4.1 LM (`lm_phase5_2.pt`) and the offline-fusion recipe are unchanged.
+This repository hosts the **v0.5.2 release** of morseformer. The acoustic checkpoint is unchanged from v0.5.1 (`rnnt_phase5_5.pt`, 4.13 M params, 49-vocab). v0.5.2 adds an **inference-only** fix: a class-conditional confidence threshold on digit tokens (0-9) that suppresses the residual v0.5.1 live failure mode where the model emitted confident pseudo-numerals (`061511813`, `5'9734`) on band noise or transitional weak signal. No retraining; the same checkpoint is recommended.
+
+## What's new in v0.5.2
+
+The v0.5.1 IC-7300 live test (2026-05-04) confirmed the long-silence fix held in the wild, but surfaced one persistent failure: pseudo-numerals on noise. The regular `--confidence-threshold 0.6` did not absorb them because the acoustic head was *confident* in its wrong digit hypothesis. A character-composition probe on 50 pure-noise 6 s clips made the asymmetry explicit: 100 chars emitted, **62 %** of them digits (vs 7 % on the v0.5.0 acoustic).
+
+- **Class-conditional digit threshold.** `RnntModel.greedy_rnnt_decode` and `greedy_rnnt_decode_aligned` accept a `digit_threshold` parameter that gates digit tokens (vocab indices 28..37 = 0-9) at a stricter level than the regular `confidence_threshold`. The streaming decoder forwards this through `StreamingConfig.digit_threshold`. New CLI flag `--digit-threshold` on `decode_live` (default `0.90`), `decode_audio` (no default), and `eval_false_positive` (no default). Pass `0.0` to disable.
+- One retraining attempt (Phase 5.6 with a pseudo-Morse empty-sample mode at `empty_sample_probability=0.40`) made the digit-on-noise failure *worse* (62 % → 94 %). Kept in the codebase for reference (commit fa2b461) but not the v0.5.2 path.
+- LM fusion (`greedy_rnnt_decode_with_lm`) does not yet propagate `digit_threshold`. Fusion + digit gating is a small plumbing pass for a follow-up.
+
+### Caveats
+
+- The cost of `digit_threshold=0.90` on the v0.5.1 acoustic: −1 word out of 30 on the `bench_word_gap` 6× inter-word-silence bench (27 → 26), and −3 % relative legitimate digit recall on a 10-phrase synthetic ham-radio set (RST 599, callsigns, QTH).
+- The threshold is a fixed scalar — context-aware gating (allow digits if recently inside an RST / callsign emission) is a future enhancement.
+- ILME / density-ratio fusion remains catastrophic; do **not** pass `--ilm-weight > 0`.
 
 ## What's new in v0.5.1
 
@@ -119,7 +133,7 @@ The motivating live test (2026-05-02) was a 7-minute hand-keyed `test.wav` with 
 
 | file | params | vocab | description | recommended |
 |---|---|---|---|---|
-| `rnnt_phase5_5.pt` | 4.13 M | **49** | **v0.5.1 acoustic — Phase 5.5 (long inter-word silences) on top of v0.5.0.** | ✅ |
+| `rnnt_phase5_5.pt` | 4.13 M | **49** | **v0.5.1 / v0.5.2 acoustic — Phase 5.5 (long inter-word silences) on top of v0.5.0. Pair with `--digit-threshold 0.90` for v0.5.2 inference behaviour.** | ✅ |
 | `lm_phase5_2.pt`   | 4.76 M | **49** | v0.4.1 LM — matched to the Phase 3.5 text mix (multilingual prose + ham radio). val_ppl 5.626. **Use this for shallow fusion at λ = 0.7.** | ✅ |
 | `rnnt_phase5_4.pt` | 4.13 M | 49 | v0.5.0 acoustic — Phase 5.3 (wider jitter + dash:dot ratio) + Phase 5.4 (30 % real-audio mix). Kept for diff. | |
 | `rnnt_phase3_5.pt` | 4.13 M | 49 | v0.4.0 / v0.4.1 acoustic — synthetic-only. Kept for diff. | |
@@ -155,7 +169,7 @@ git clone https://github.com/sderhy/morseformer
 cd morseformer
 pip install -e ".[audio]"
 
-# Download the v0.5.1 checkpoints
+# Download the v0.5.2 checkpoints (same files as v0.5.1)
 pip install huggingface_hub
 hf download sderhy/morseformer rnnt_phase5_5.pt \
     --local-dir checkpoints/phase5_5
@@ -164,12 +178,14 @@ hf download sderhy/morseformer lm_phase5_2.pt \
 
 # Decode with shallow-fusion LM rescoring (recommended for prose audio).
 # The threshold gate runs on the acoustic head, so it suppresses noise
-# even when fusion is on.
+# even when fusion is on. --digit-threshold suppresses pseudo-numerals
+# on noise (v0.5.2 inference fix).
 python -m scripts.decode_audio my_recording.wav \
     --ckpt    checkpoints/phase5_5/rnnt_phase5_5.pt \
     --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
     --fusion-weight 0.7 \
-    --confidence-threshold 0.6
+    --confidence-threshold 0.6 \
+    --digit-threshold 0.90
 
 # Or acoustic-only (no LM, no gating — fastest, smallest deps).
 python -m scripts.decode_audio my_recording.wav \
@@ -182,7 +198,7 @@ python -m scripts.decode_audio my_recording.wav \
 python -m scripts.decode_live --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
 ```
 
-Tune your receiver to zero-beat at 600 Hz with a ≈ 500 Hz CW filter. `Ctrl+C` to quit. Latency is ~4 s end-to-end. v0.4.1 ships `--confidence-threshold 0.6` as the default, which kills 90 % of noise-driven false positives (FP mean 1.50 → 0.17 chars per noise sample); pass `--confidence-threshold 0.0` to recover the v0.4.0 streaming behaviour exactly. **LM fusion is offline-only in v0.4.1**: the streaming decoder still uses the acoustic-only greedy path. Plumbing fusion through the central-zone-commit logic is a separate piece of work earmarked for a follow-up release.
+Tune your receiver to zero-beat at 600 Hz with a ≈ 500 Hz CW filter. `Ctrl+C` to quit. Latency is ~4 s end-to-end. v0.5.2 ships `--confidence-threshold 0.6` *and* `--digit-threshold 0.90` as defaults; the latter is the inference-only fix that suppresses pseudo-numerals on noise. Pass `--digit-threshold 0.0` to recover v0.5.1 streaming behaviour exactly, or `--confidence-threshold 0.0` for v0.4.0 behaviour. **LM fusion is offline-only**: the streaming decoder still uses the acoustic-only greedy path; plumbing fusion through the central-zone-commit logic is a separate piece of work earmarked for a follow-up release.
 
 ## Training data
 
@@ -324,11 +340,11 @@ Training budget for v0.4 (everything, Phase 0 → Phase 3.5): roughly 76 h of si
 ## Citation
 
 ```bibtex
-@software{morseformer_v0_5_1_2026,
+@software{morseformer_v0_5_2_2026,
   author       = {Derhy, Serge},
   title        = {morseformer: open-source transformer-based Morse / CW decoder},
   year         = 2026,
-  version      = {v0.5.1},
+  version      = {v0.5.2},
   url          = {https://github.com/sderhy/morseformer},
   howpublished = {\url{https://huggingface.co/sderhy/morseformer}},
 }

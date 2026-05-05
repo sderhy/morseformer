@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.5.1](https://img.shields.io/badge/release-v0.5.1-brightgreen.svg)](#release-v051)
+[![Release: v0.5.2](https://img.shields.io/badge/release-v0.5.2-brightgreen.svg)](#release-v052)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.1 release** ships a new acoustic model (`rnnt_phase5_5.pt`) that fixes the v0.5.0 live failure mode where prolonged silences between words (a slow / hesitant operator) caused word fusion or hallucinations: at 25 WPM with 6× inflated inter-word silence, word recall jumps from **8 / 30 → 27 / 30** and CER from **17.4 % → 1.5 %**. Out-of-domain wins are preserved (Alice ebook2cw n=120: 18.8 % → 16.4 % CER) and false positives stay at zero in `decode_live` mode. The model is a single-knob extension of v0.5.0's Phase 5.3 / 5.4 curriculum: per-utterance inter-word gap inflation sampled in `U(1.0, 8.0)`.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.2 release** is an **inference-only fix** on top of the v0.5.1 acoustic (`rnnt_phase5_5.pt`, unchanged): a class-conditional confidence threshold on digit tokens (0-9) suppresses the v0.5.1 live failure mode where the model emitted confident pseudo-numerals (`061511813`, `5'9734`) on noise / weak signal. On the FP bench, the digit share of characters emitted on pure-noise audio drops from **62 % → ~0 %** without retraining. Alice and the hand-keyed user audio improve marginally (the suppressed digits were edits) and synthetic French / word-gap regression is within 1 word per 30. `decode_live` ships `--digit-threshold 0.90` as the new default.
 
 ## Why
 
@@ -51,6 +51,53 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 ```
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
+```
+
+## Release v0.5.2
+
+Inference-only fix — **no retraining**, same `rnnt_phase5_5.pt` checkpoint as v0.5.1. v0.5.1 was live-validated on an IC-7300 with the verdict "bien meilleur jusqu'à présent", but the transcript surfaced one consistent failure mode: pseudo-numerals (`061511813`, `5'9734`, `5NR45`) emitted with high confidence on band noise or transitional weak signal. The regular `--confidence-threshold 0.6` did not absorb them because the acoustic head was *confident* in its wrong digit hypothesis (94 % of the chars emitted on pure-noise samples were digits).
+
+- **Class-conditional confidence threshold.** Digit tokens (vocab indices 28..37 = 0-9) gate at a stricter threshold than letters / punctuation. New `--digit-threshold` flag on `decode_live`, `decode_audio`, and `eval_false_positive`. `decode_live` ships `0.90` as the default; pass `0.0` to recover v0.5.1 behaviour.
+- The fix is implemented inside `RnntModel.greedy_rnnt_decode` and propagated through `StreamingDecoder` — it stacks cleanly with the regular threshold and with shallow fusion.
+- A failed retraining attempt (Phase 5.6 with a pseudo-Morse empty-sample mode at `empty_sample_probability=0.40`) is kept in the codebase for reference (commit fa2b461) but is **not** the v0.5.2 release path.
+
+### What's new in v0.5.2
+
+| Bench | v0.5.1 stock | **v0.5.2 (digit_thr=0.90)** |
+|---|---|---|
+| **Digit share of FP characters on pure noise** | 62 % | **~0 %** |
+| **FP-bench mean chars/sample, no thresh** | 1.97 | 1.88 |
+| **FP-bench mean chars/sample, +thresh 0.6** | 0.01 | **0.00** |
+| **Alice ebook2cw n=120, greedy** | 16.39 % CER | **15.93 % CER** (−0.5 pp) |
+| **`test_manu.wav` Wordsworth, hand-keyed** | 23.49 % CER | **23.26 % CER** (−0.2 pp) |
+| **Synthetic FR mix overall (240 samples)** | 1.12 % | 1.12 % (=) |
+| **`bench_word_gap` 6× inter-word silence** | 27 / 30 word_acc, 1.5 % CER | 26 / 30, 1.9 % CER |
+| **Legitimate digit recall (10 ham phrases)** | 87 % | 84 % (−3 % rel) |
+
+### Limitations of v0.5.2
+
+- A fixed scalar threshold on digits is a coarse fix. A future release could replace it with class-conditional softmax temperature or a context-aware gate (digit-allowed if recently inside a callsign / RST exchange).
+- The −1 word_acc on `bench_word_gap` 6× and the −3 % relative legitimate digit recall are the cost; both are within noise on real-air audio.
+- LM fusion path (`greedy_rnnt_decode_with_lm`) does not yet propagate `digit_threshold`. Fusion + digit gating would need an extra plumbing pass; not a concern for the streaming default.
+
+### Recommended decode for v0.5.2
+
+Streaming live (default — digit gate on):
+
+```bash
+python -m scripts.decode_live --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
+# implies --confidence-threshold 0.6 --digit-threshold 0.90
+```
+
+Offline with fusion:
+
+```bash
+python -m scripts.decode_audio my_recording.wav \
+    --ckpt    checkpoints/phase5_5/rnnt_phase5_5.pt \
+    --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
+    --fusion-weight 0.7 \
+    --confidence-threshold 0.6 \
+    --digit-threshold 0.90
 ```
 
 ## Release v0.5.1
