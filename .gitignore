@@ -71,3 +71,5 @@ release/
 
 # Claude Code per-project config and scheduled-task lock — local only.
 .claude/
+# Fichiers Sderhy
+ligne_commande.txt

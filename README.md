@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.5.2](https://img.shields.io/badge/release-v0.5.2-brightgreen.svg)](#release-v052)
+[![Release: v0.5.3](https://img.shields.io/badge/release-v0.5.3-brightgreen.svg)](#release-v053)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.2 release** is an **inference-only fix** on top of the v0.5.1 acoustic (`rnnt_phase5_5.pt`, unchanged): a class-conditional confidence threshold on digit tokens (0-9) suppresses the v0.5.1 live failure mode where the model emitted confident pseudo-numerals (`061511813`, `5'9734`) on noise / weak signal. On the FP bench, the digit share of characters emitted on pure-noise audio drops from **62 % → ~0 %** without retraining. Alice and the hand-keyed user audio improve marginally (the suppressed digits were edits) and synthetic French / word-gap regression is within 1 word per 30. `decode_live` ships `--digit-threshold 0.90` as the new default.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.3 release** ships a new acoustic (`rnnt_phase5_7.pt`, 4.13 M params, 49-vocab) — a 15 k-step fine-tune of the v0.5.2 acoustic on an **amateur-idiom curriculum**: 5NN cut-numbers (the contest-style spoken `5NN` for `599`) and run-on prosigns where two letters share an inter-letter gap (`UR`, `SK`, `KN`, `BK`). Live-validated on an IC-7300 against FAV22 5-letter groups + a 40 m QSO: explicit `5NN` decoding `× 4-5` vs v0.5.2, the `MI0MO` callsign recovered where v0.5.2 confused it. The v0.5.2 inference-only digit-threshold fix is preserved.
 
 ## Why
 
@@ -21,29 +21,29 @@ cd morseformer
 pip install -e ".[dev,audio]"
 pytest -q
 
-# download the v0.5.1 release checkpoints (acoustic 33 MB + LM 38 MB)
+# download the v0.5.3 release checkpoints (acoustic 32 MB + LM 38 MB)
 pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase5_5.pt \
-    --local-dir checkpoints/phase5_5
+hf download sderhy/morseformer rnnt_phase5_7.pt \
+    --local-dir checkpoints/phase5_7
 hf download sderhy/morseformer lm_phase5_2.pt \
     --local-dir checkpoints/lm_phase5_2
 
-# Recommended: shallow-fusion decode (acoustic + LM). Cuts another
-# −13 % CER on real prose on top of the v0.5.1 acoustic gain.
+# Recommended: shallow-fusion decode (acoustic + LM).
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt    checkpoints/phase5_5/rnnt_phase5_5.pt \
+    --ckpt    checkpoints/phase5_7/rnnt_phase5_7.pt \
     --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
     --fusion-weight 0.7 \
-    --confidence-threshold 0.6
+    --confidence-threshold 0.6 \
+    --digit-threshold 0.90
 
 # Or acoustic-only (faster, no LM dependency)
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
+    --ckpt checkpoints/phase5_7/rnnt_phase5_7.pt
 
 # Real-time streaming on a live receiver (PulseAudio input).
-# Threshold 0.6 is the v0.4.1+ default — gates noise-driven
-# false positives. Fusion is offline-only for now.
-python -m scripts.decode_live --ckpt checkpoints/phase5_5/rnnt_phase5_5.pt
+# Threshold 0.6 + digit-threshold 0.90 are defaults — gate noise-driven
+# false positives and pseudo-numerals. Fusion is offline-only for now.
+python -m scripts.decode_live --ckpt checkpoints/phase5_7/rnnt_phase5_7.pt
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -51,6 +51,51 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 ```
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
+```
+
+## Release v0.5.3
+
+Phase 5.7 amateur-idiom curriculum on top of v0.5.2. **New acoustic checkpoint `rnnt_phase5_7.pt`** (4.13 M params, 49-vocab); LM and inference defaults unchanged.
+
+The v0.5.2 release was live-validated as a "qualitative-parity-with-cwget" milestone, but the user transcript surfaced three letter-level residuals consistently visible on the IC-7300 stream: `5NN` (the spoken contest cut-number for `599`) decoded as `5MN` or `ENN`; the `0`-prefixed callsign `MI0MO` rendered as `MI4MO`; standard run-on prosigns (`UR`, `SK`, `KN`, `BK`) split into their constituent letters because the synthetic curriculum had only ever shown them with normal inter-letter gaps. Phase 5.7 is a 15 k-step fine-tune from `phase5_5/last` on a curriculum that targets these directly:
+
+- **`PHASE_5_7_MIX`** — new text mix with 5NN cut-numbers and a `_CONTEST_DENSE_TEMPLATES` slice (densely-packed contest exchanges around `5NN <NR>`).
+- **`OperatorConfig.run_on_pairs`** — a per-utterance probability of collapsing the inter-letter gap on declared digraphs to a single inter-element gap. Defaults: `UR 0.50, SK 0.85, KN 0.70, BK 0.70`. Old presets keep `run_on_pairs=()` so legacy curricula are byte-identical.
+- **Bootstrap** from `phase5_5/last` (the v0.5.2 acoustic). Same channel, jitter, dash:dot, gap-inflation, word-gap-inflation, FP-prior, and 30 % real-audio mix as Phase 5.5. Strict ablation around the curriculum delta. LR 5e-5, EMA 0.9999, bf16, batch 12, ~2 h on RTX 3060.
+
+### What's new in v0.5.3
+
+Live-test on IC-7300 (2026-05-06, FAV22 5-letter groups + a 40 m QSO):
+
+| Behaviour | v0.5.2 | **v0.5.3** |
+|---|---|---|
+| `5NN` cut-number explicit emission count, FAV22 + QSO transcript | 1× | **4–5×** |
+| `MI0MO` callsign on weak signal | `MI4MO` | **`MI0MO`** ✅ |
+| Run-on prosigns (`UR`, `SK`, `KN`, `BK`) | split into letters | emitted as digraphs |
+| User verdict | "qualitative parity with cwget" | "plutôt bien, pas trop d'hallucination" |
+
+### Limitations of v0.5.3
+
+- **`BK` over-emission on extreme pile-ups.** On a noisy multi-station pile-up sample the model emitted 23 spurious `BK` tokens — the run-on prior is too eager when several weak signals overlap. A future Phase 5.8 candidate would lower `run_on_pairs` (`BK 0.70 → 0.30`, `KN 0.70 → 0.30`, `UR 0.50 → 0.25`, `SK 0.85 → 0.50`) bootstrapped from `phase5_5/last`, **not** from `phase5_7/last`.
+- `UR` recall regressed slightly on legitimate (non-run-on) sequences and a few callsign trails went `D → B`. Net trade is positive on the live test but the regression is real.
+- The `best_rnnt.pt` checkpoint at step ~11 k saturates the dormant `ValidationConfig.matching()` clean-CW val signal at 0 % CER; **`last.pt` (step 15 000) is the released checkpoint**, same as v0.5.1 / v0.5.2.
+- Pile-up `noisy-pile-up.wav` (F6GCI / IU0TEZ / 5I9HFM overlapping at the same frequency) remains unrecoverable. This is a multi-source separation problem, not an acoustic one — out of scope for the current architecture.
+
+### Recommended decode for v0.5.3
+
+Same CLI as v0.5.2, just point the `--ckpt` at `rnnt_phase5_7.pt`:
+
+```bash
+# Live streaming (default — 0.6 threshold + 0.90 digit gate on)
+python -m scripts.decode_live --ckpt checkpoints/phase5_7/rnnt_phase5_7.pt
+
+# Offline with fusion
+python -m scripts.decode_audio my_recording.wav \
+    --ckpt    checkpoints/phase5_7/rnnt_phase5_7.pt \
+    --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
+    --fusion-weight 0.7 \
+    --confidence-threshold 0.6 \
+    --digit-threshold 0.90
 ```
 
 ## Release v0.5.2
