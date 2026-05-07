@@ -63,6 +63,7 @@ Thumbs.db
 *.pem
 api_key.txt
 apikey
+.pypirc
 checkpoints/
 
 # Release staging (produced by scripts/prepare_release.py; uploaded via
