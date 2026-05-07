@@ -42,6 +42,7 @@ from morseformer.data.text import (
     PHASE_3_4_MIX,
     PHASE_3_6_MIX,
     PHASE_4_0_MIX,
+    PHASE_5_7_MIX,
     TextMix,
     sample_random_chars_phase4,
     sample_text,
@@ -182,6 +183,19 @@ class DatasetConfig:
     # because no training sample had ever shown an inflated word gap.
     # (1.0, 1.0) = legacy behaviour (Phase 5.3 / 5.4).
     operator_word_gap_inflation_range: tuple[float, float] = (1.0, 1.0)
+
+    # --- Phase 5.7 extension: run-on prosign rendering ---
+    # List of (first, second, probability) triples passed verbatim to
+    # ``OperatorConfig.run_on_pairs``. Whenever the pair appears
+    # adjacent inside a word, the inter-character gap is collapsed to
+    # zero with the given probability — fusing the two letters into a
+    # single prosign-rhythm.
+    #
+    # Targets the v0.5.2 pile-up live failure where common amateur
+    # abbreviations (UR, SK, KN, BK) are spoken run-on but the model
+    # only saw cleanly-spaced letters. Defaults to empty so older
+    # presets are byte-for-byte equivalent.
+    operator_run_on_pairs: tuple[tuple[str, str, float], ...] = ()
 
     # --- Phase 3.1 extensions: richer HF channel, all disabled by default ---
     #
@@ -606,6 +620,63 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
+    def phase_5_7(cls, **overrides) -> "DatasetConfig":
+        """Phase 5.7 amateur-radio idiom curriculum.
+
+        Phase 5.5 channel + jitter envelope, plus two text/operator
+        changes that target the v0.5.2 noisy-pile-up live failures:
+
+        * ``text_mix = PHASE_5_7_MIX`` — adds a 30 % ``contest_dense``
+          slice (see :data:`morseformer.data.text._CONTEST_DENSE_TEMPLATES`)
+          where ``5NN`` (cut-number 599) and pile-up exchanges
+          (``{cs} 5NN {serial}``, ``TU 5NN BK``, ``TU 73 SK``) dominate.
+          ``5NN`` exposure goes from ~1.5 % of samples (Phase 5.5) to
+          ~15 %, attacking the ``5NN → 5N / 5C / 5NB`` mis-decode
+          observed on real contest segments.
+        * ``operator_run_on_pairs`` — fuses ``UR``, ``SK``, ``KN``,
+          ``BK`` to zero inter-character gap with high probability per
+          pair. Real CW operators send these abbreviations as a single
+          run-on rhythm (e.g. ``..-.-.`` for ``UR``); without this
+          augmentation the model has only seen them as two cleanly-
+          spaced letters and mis-segments them. Probabilities chosen
+          per amateur convention: ``SK`` is almost always run-on (0.85),
+          ``KN`` and ``BK`` usually (0.70), ``UR`` colloquially (0.50).
+
+        Bootstrap target: ``checkpoints/phase5_5/last.pt`` — same
+        vocab (49), same channel, same jitter envelope. Single fine-
+        tune. Don't bootstrap from ``phase5_6/last.pt`` — that
+        experiment failed (`project_phase5_6_result.md`).
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            operator_word_gap_inflation_range=(1.0, 8.0),
+            operator_run_on_pairs=(
+                ("U", "R", 0.50),
+                ("S", "K", 0.85),
+                ("K", "N", 0.70),
+                ("B", "K", 0.70),
+            ),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_5_7_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
     def phase_5_3(cls, **overrides) -> "DatasetConfig":
         """Phase 5.3 hand-keyed-robustness curriculum.
 
@@ -875,6 +946,7 @@ class SyntheticCWDataset(IterableDataset):
             dash_dot_ratio=dash_dot_ratio,
             gap_inflation=gap_inflation,
             word_gap_inflation=word_gap_inflation,
+            run_on_pairs=self.cfg.operator_run_on_pairs,
             seed=op_seed,
         )
 

@@ -101,6 +101,10 @@ _QCODES_AND_ABBREVS: tuple[str, ...] = (
     "OM", "YL", "XYL", "HR", "UR",
     # ---- Signal reports ----
     "RST", "599", "579", "569", "559", "449", "339",
+    # Cut-number RST forms. "5NN" (= 599 with 9→N) is by far the most
+    # common in real contest / pile-up traffic — sent because N (-.) is
+    # two elements vs 9 (----.) at five.
+    "5NN", "5NN", "5NN", "5TT", "5NT",
     # ---- Conditions / gear ----
     "WX", "ANT", "RIG", "PWR", "DX", "QRO", "QRP",
     # ---- Affirmatives / negatives ----
@@ -227,6 +231,12 @@ _QTHS: tuple[str, ...] = (
 _RSTS: tuple[str, ...] = (
     "599", "579", "569", "559", "449", "339", "229", "119",
     "589", "578", "568", "478", "468",
+    # Cut-number variants. In CW contests / pile-ups operators send
+    # "5NN" instead of "599" because N (-.) is two elements vs 9
+    # (----. ) at five — saves time. Other cut numbers (T=0, A=1) are
+    # rarer but appear; included at lower frequency.
+    "5NN", "5NN", "5NN",  # weight 5NN heavily — by far the most common
+    "5TT", "5NT", "5TN", "5AN", "5NA",
 )
 
 _RIG_MODELS: tuple[str, ...] = (
@@ -299,6 +309,109 @@ def _render_template(tpl: str, rng: np.random.Generator) -> str:
 
 def sample_qso_line(rng: np.random.Generator) -> str:
     tpl = _QSO_TEMPLATES[int(rng.integers(0, len(_QSO_TEMPLATES)))]
+    return _render_template(tpl, rng)
+
+
+# --------------------------------------------------------------------- #
+# Contest-dense / pile-up templates (Phase 5.7)
+# --------------------------------------------------------------------- #
+#
+# These templates concentrate the patterns that dominate dense real-air
+# traffic — short fast exchanges like ``{cs} 5NN {serial} TU``, multiple
+# ``5NN`` per line, end-of-QSO ``SK``, prosigns, repeat requests
+# (``AGN``). Existing ``_QSO_TEMPLATES`` cover rag-chew patterns
+# (NAME/QTH/RIG/ANT) which also need preservation; this list is a
+# higher-density companion drawn separately so a Phase 5.7 mix can
+# bias toward contest exchanges without starving other categories.
+#
+# ``{rst}`` resolves through the (now cut-number-augmented) ``_RSTS``
+# table, so ``5NN`` arises naturally with ~20 % probability in any
+# template that uses the slot. Some templates pin the literal ``5NN``
+# explicitly to push that share higher in the contest-dense stream.
+
+_CONTEST_DENSE_TEMPLATES: tuple[str, ...] = (
+    # Plain CQ TEST openers (the bread and butter of any contest segment).
+    "CQ TEST DE {cs} {cs} TEST",
+    "CQ CQ TEST DE {cs}",
+    "CQ TEST {cs}",
+    "TEST DE {cs} {cs}",
+    # Single-over fast exchange (the most common pile-up line).
+    "{cs} 5NN {serial}",
+    "{cs} 5NN {serial} {serial}",
+    "{cs} 5NN {zone}",
+    "{cs} {rst} {serial}",
+    "{cs} {rst} {zone}",
+    "599 {serial} TU",
+    "5NN {serial} TU",
+    "5NN {serial} BK",
+    "5NN {zone} BK",
+    "TU {cs} 5NN {serial}",
+    "TU 5NN {serial} TU",
+    "TU 5NN {zone}",
+    "{cs} TU 5NN {serial}",
+    "{cs} DE {cs} 5NN {serial} K",
+    "{cs} DE {cs} 5NN {zone} K",
+    "{cs} {serial} 5NN BK",
+    # Closing forms — UR, SK, +, KN, BK heavily.
+    "TU 73 SK",
+    "TU 73 ES GL SK",
+    "{cs} TU 73 SK",
+    "TU FB 73 +",
+    "{cs} 73 SK",
+    "TU QSO 73 SK",
+    "TU 5NN 73 SK",
+    "QSO 73 +",
+    "GL 73 SK",
+    # Repeat / clarification chains (very common in pile-ups).
+    "AGN AGN {serial}",
+    "{serial}? AGN",
+    "AGN {cs}? BK",
+    "{cs}? AGN BK",
+    "PSE AGN {serial}",
+    "{cs} {cs} AGN",
+    "QRZ? DE {cs}",
+    "QRZ QRZ DE {cs} K",
+    # Reports + UR-prefixed exchanges (run-on UR is the user's main
+    # request — the literal letters are kept here; the run-on rendering
+    # is applied in the operator stage).
+    "UR 5NN {serial}",
+    "UR 5NN BK",
+    "UR 5NN TU",
+    "{cs} UR 5NN",
+    "{cs} UR 5NN BK",
+    "TU UR 5NN {serial}",
+    "{cs} DE {cs} UR 5NN {serial}",
+    "{cs} DE {cs} UR 5NN {zone}",
+    # Pile-up "K" / "KN" operator-only-listening patterns.
+    "{cs} K",
+    "{cs} KN",
+    "{cs} {cs} KN",
+    # Mixed contest exchanges with frequencies / numbers.
+    "5NN {serial} {serial} BK",
+    "5NN {zone} 5NN BK",
+    "5NN 5NN {serial} TU",
+    # End-of-message + acknowledgement.
+    "+ TU",
+    "{cs} + TU",
+    "TU 5NN +",
+    # Confused / stutter exchanges (more realistic real-air).
+    "AGN PSE 5NN",
+    "QRZ {cs} K",
+    "{cs} QRM PSE AGN",
+    "QSY 5 UP",
+    "QSY UP 1",
+    # Single-token bursts (the kind of fragment you hear in chunks).
+    "5NN 5NN",
+    "BK 5NN",
+    "TU 5NN",
+    "5NN TU",
+)
+
+
+def sample_contest_dense(rng: np.random.Generator) -> str:
+    tpl = _CONTEST_DENSE_TEMPLATES[
+        int(rng.integers(0, len(_CONTEST_DENSE_TEMPLATES)))
+    ]
     return _render_template(tpl, rng)
 
 
@@ -1012,6 +1125,10 @@ class TextMix:
     # 3.x presets stay byte-for-byte equivalent. Phase 4.0 sets this to
     # 1.0 and zeroes everything else.
     random_phase4: float = 0.0
+    # Phase 5.7 — contest-dense / pile-up templates. See
+    # `_CONTEST_DENSE_TEMPLATES`. Defaults to 0.0 so older presets are
+    # byte-for-byte equivalent.
+    contest_dense: float = 0.0
 
     def is_random_phase4_only(self) -> bool:
         """True iff ``random_phase4`` is the sole non-zero category.
@@ -1026,6 +1143,7 @@ class TextMix:
             and self.numeric == 0 and self.words == 0 and self.random == 0
             and self.prose == 0 and self.prose_fr == 0
             and self.adversarial_fr == 0
+            and self.contest_dense == 0
         )
 
     def as_array(self) -> np.ndarray:
@@ -1034,7 +1152,7 @@ class TextMix:
                 self.callsign, self.qcode, self.qso,
                 self.numeric, self.words, self.random,
                 self.prose, self.prose_fr, self.adversarial_fr,
-                self.random_phase4,
+                self.random_phase4, self.contest_dense,
             ],
             dtype=np.float64,
         )
@@ -1135,10 +1253,41 @@ PHASE_4_0_MIX = TextMix(
 )
 
 
+# Phase 5.7 — amateur-radio idiom curriculum. The v0.5.2 noisy-pile-up
+# live test surfaced two reliable failure modes that point straight at
+# our training-text distribution rather than at the acoustic model:
+#
+#   1. ``5NN`` (cut-number form of 599) is decoded as ``5N`` / ``5C`` /
+#      ``5NB`` — the model has barely seen the literal "5NN" pattern
+#      since our Wikipedia / prose mix rarely contains contest-style
+#      RST reports.
+#   2. Common amateur abbreviations sent run-on (``UR``, ``SK``, ``KN``,
+#      ``BK``) are mis-segmented because every training sample saw them
+#      as two cleanly-spaced letters.
+#
+# Phase 5.7 reshapes the mix to attack (1) and pairs with the operator
+# ``run_on_pairs`` knob to attack (2). 30 % weight on
+# ``contest_dense`` is enough to make ``5NN`` the dominant RST string
+# the model sees during fine-tune; the remaining 70 % preserves the
+# Phase-3.4-flavoured FR / EN / random / Q-code mix that keeps live
+# generalisation intact.
+PHASE_5_7_MIX = TextMix(
+    callsign=0.08,
+    qcode=0.10,
+    qso=0.15,
+    numeric=0.10,
+    words=0.04,
+    random=0.10,
+    prose=0.05,
+    prose_fr=0.08,
+    contest_dense=0.30,
+)
+
+
 _CATEGORIES = (
     "callsign", "qcode", "qso", "numeric", "words",
     "random", "prose", "prose_fr", "adversarial_fr",
-    "random_phase4",
+    "random_phase4", "contest_dense",
 )
 _SAMPLERS = {
     "callsign": sample_callsign,
@@ -1151,6 +1300,7 @@ _SAMPLERS = {
     "prose_fr": sample_prose_fr,
     "adversarial_fr": sample_french_adversarial,
     "random_phase4": sample_random_chars_phase4,
+    "contest_dense": sample_contest_dense,
 }
 
 

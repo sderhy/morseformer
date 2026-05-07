@@ -59,6 +59,19 @@ class OperatorConfig:
                              because the synthetic training distribution
                              only ever saw 7-dit gaps. Phase 5.5 samples this
                              in [1.0, 8.0] to cover slow / hesitant keying.
+        run_on_pairs:        List of ``(first, second, probability)`` triples.
+                             Whenever the literal pair ``first+second`` appears
+                             adjacent inside a word, the inter-character gap
+                             between them is collapsed to zero with the given
+                             probability — rendering the two letters as a
+                             single prosign-rhythm. The text label is left
+                             untouched (so "UR" stays "UR" in the labels even
+                             when its audio is the 6-element run-on
+                             ``..-.-.``). Targets the v0.5.2-era live failure
+                             where common amateur abbreviations (UR, SK, KN,
+                             BK) are spoken run-on but the model only saw
+                             them as two cleanly-spaced letters at training.
+                             Empty tuple = legacy behaviour.
         seed:                Optional integer seed for reproducibility.
     """
 
@@ -70,6 +83,7 @@ class OperatorConfig:
     dash_dot_ratio: float = 3.0
     gap_inflation: float = 1.0
     word_gap_inflation: float = 1.0
+    run_on_pairs: tuple[tuple[str, str, float], ...] = ()
     seed: int | None = None
 
 
@@ -110,19 +124,33 @@ def build_events(text: str, cfg: OperatorConfig | None = None) -> list[Event]:
     inflation = max(0.1, cfg.gap_inflation)
     word_inflation = max(0.1, cfg.word_gap_inflation)
 
+    # Index run-on pairs for O(1) look-up. Upper-cased to match the
+    # `text.upper()` on the next line.
+    run_on_lookup: dict[tuple[str, str], float] = {
+        (a.upper(), b.upper()): float(p) for a, b, p in cfg.run_on_pairs
+    }
+
     events: list[Event] = []
     words = text.upper().split()
     for word_i, word in enumerate(words):
         if word_i > 0:
             gap_units = jitter_units(cfg.farnsworth_word_gap, cfg.gap_jitter) * word_inflation
             events.append((False, gap_units * u))
+        prev_emitted: str | None = None  # last letter that produced events
         for char_i, ch in enumerate(word):
             code = MORSE_TABLE.get(ch)
             if code is None:
                 continue
-            if char_i > 0:
-                gap_units = jitter_units(cfg.farnsworth_char_gap, cfg.gap_jitter)
-                events.append((False, gap_units * u))
+            if prev_emitted is not None:
+                # Run-on collapse: with the configured probability for this
+                # specific pair, skip the inter-character gap entirely so the
+                # pair fuses into a single prosign-rhythm.
+                pair_prob = run_on_lookup.get((prev_emitted, ch), 0.0)
+                if pair_prob > 0.0 and rng.random() < pair_prob:
+                    pass  # no inter-character gap
+                else:
+                    gap_units = jitter_units(cfg.farnsworth_char_gap, cfg.gap_jitter)
+                    events.append((False, gap_units * u))
             for elem_i, elem in enumerate(code):
                 if elem_i > 0:
                     gap_units = jitter_units(1.0, cfg.gap_jitter) * inflation
@@ -130,5 +158,6 @@ def build_events(text: str, cfg: OperatorConfig | None = None) -> list[Event]:
                 nominal = 1.0 if elem == "." else dash_units
                 elem_units = jitter_units(nominal, cfg.element_jitter)
                 events.append((True, elem_units * u))
+            prev_emitted = ch
 
     return events
