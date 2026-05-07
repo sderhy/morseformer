@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "morseformer"
-version = "0.1.0"
+version = "0.5.4"
 description = "Open-source transformer-based Morse/CW decoder with a built-in ham-specialised language model"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -48,8 +48,11 @@ Homepage = "https://github.com/sderhy/morseformer"
 Repository = "https://github.com/sderhy/morseformer"
 Issues = "https://github.com/sderhy/morseformer/issues"
 
+[project.scripts]
+morseformer = "morseformer.cli:main"
+
 [tool.hatch.build.targets.wheel]
-packages = ["morseformer", "morse_synth"]
+packages = ["morseformer", "morse_synth", "scripts"]
 
 [tool.ruff]
 line-length = 100

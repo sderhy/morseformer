@@ -4,7 +4,7 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.5.3](https://img.shields.io/badge/release-v0.5.3-brightgreen.svg)](#release-v053)
+[![Release: v0.5.4](https://img.shields.io/badge/release-v0.5.4-brightgreen.svg)](#release-v054)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
 Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.3 release** ships a new acoustic (`rnnt_phase5_7.pt`, 4.13 M params, 49-vocab) — a 15 k-step fine-tune of the v0.5.2 acoustic on an **amateur-idiom curriculum**: 5NN cut-numbers (the contest-style spoken `5NN` for `599`) and run-on prosigns where two letters share an inter-letter gap (`UR`, `SK`, `KN`, `BK`). Live-validated on an IC-7300 against FAV22 5-letter groups + a 40 m QSO: explicit `5NN` decoding `× 4-5` vs v0.5.2, the `MI0MO` callsign recovered where v0.5.2 confused it. The v0.5.2 inference-only digit-threshold fix is preserved.
@@ -16,34 +16,51 @@ Existing open-source CW decoders (`fldigi`, `cwdecoder`, `MRP40`) rely on hand-t
 ## Quick start
 
 ```bash
+# Pip-install — first-time model fetch is automatic from HuggingFace.
+pip install "morseformer[ml,audio,hub]"
+
+# Offline file decode — defaults to the `live` preset (rnnt_phase5_7
+# + threshold 0.6 + digit-threshold 0.90).
+morseformer decode my_recording.wav
+
+# Same with LM shallow fusion (λ=0.7) for prose / ragchew audio.
+morseformer decode my_recording.wav --preset prose
+
+# Real-time streaming on a live receiver (PulseAudio input). Tune your
+# rig to zero-beat at 600 Hz with a ~500 Hz CW filter.
+morseformer live
+
+# Tweak preset and / or override the model.
+morseformer live --preset contest         # looser thresholds, fast exchanges
+morseformer live --preset conservative    # tightened, very noisy bands
+
+# Inspect / download checkpoints. Default shows the recommended pair;
+# --advanced lists every legacy version on HF.
+morseformer models list
+morseformer models list --advanced
+morseformer models download rnnt_phase5_7
+```
+
+The four shipped presets — `live` (default), `prose`, `contest`, `conservative` — bundle the model + thresholds + optional LM behind one flag. `morseformer --help` lists every subcommand.
+
+Developing from a checkout? Same CLI, plus the existing scripts:
+
+```bash
 git clone git@github.com:sderhy/morseformer.git
 cd morseformer
-pip install -e ".[dev,audio]"
+pip install -e ".[dev,audio,ml,hub]"
 pytest -q
 
-# download the v0.5.3 release checkpoints (acoustic 32 MB + LM 38 MB)
-pip install huggingface_hub
-hf download sderhy/morseformer rnnt_phase5_7.pt \
-    --local-dir checkpoints/phase5_7
-hf download sderhy/morseformer lm_phase5_2.pt \
-    --local-dir checkpoints/lm_phase5_2
+# CLI works against local release/ and checkpoints/ trees, no Hub fetch.
+morseformer decode my_recording.wav
 
-# Recommended: shallow-fusion decode (acoustic + LM).
+# Or call the underlying scripts directly for fine-grained control.
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt    checkpoints/phase5_7/rnnt_phase5_7.pt \
-    --lm-ckpt checkpoints/lm_phase5_2/lm_phase5_2.pt \
+    --ckpt    release/rnnt_phase5_7.pt \
+    --lm-ckpt release/lm_phase5_2.pt \
     --fusion-weight 0.7 \
     --confidence-threshold 0.6 \
     --digit-threshold 0.90
-
-# Or acoustic-only (faster, no LM dependency)
-python -m scripts.decode_audio my_recording.wav \
-    --ckpt checkpoints/phase5_7/rnnt_phase5_7.pt
-
-# Real-time streaming on a live receiver (PulseAudio input).
-# Threshold 0.6 + digit-threshold 0.90 are defaults — gate noise-driven
-# false positives and pseudo-numerals. Fusion is offline-only for now.
-python -m scripts.decode_live --ckpt checkpoints/phase5_7/rnnt_phase5_7.pt
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -51,6 +68,28 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 ```
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
+```
+
+## Release v0.5.4
+
+Packaging release — **no model change** (`rnnt_phase5_7.pt` unchanged from v0.5.3). v0.5.4 ships a unified `morseformer` console CLI that replaces the `python -m scripts.decode_*` invocations as the primary user surface:
+
+- **`pip install morseformer`** now exposes `morseformer` as a console script with three subcommands: `decode <wav>`, `live`, and `models {list,download}`.
+- **Four named presets** bundle model + thresholds + optional LM behind one flag: `live` (default; v0.5.3 streaming defaults), `prose` (LM shallow fusion λ=0.7), `contest` (looser thresholds for fast exchanges), `conservative` (tightened thresholds for very noisy bands).
+- **Auto-download from HuggingFace** on first use — no manual `hf download` step. Model registry resolves from `release/` → `checkpoints/<phase>/last.pt` → HF cache, in that order, so dev checkouts and pip-installed environments share the same CLI.
+- `morseformer models list` shows the recommended pair (`rnnt_phase5_7` + `lm_phase5_2`); `--advanced` lists every legacy 46-vocab checkpoint on the Hub.
+- Underlying `scripts/decode_audio.py` and `scripts/decode_live.py` remain available with the same flags for fine-grained control.
+- Streaming-fusion is still offline-only: when the `prose` preset is used with `morseformer live`, the LM is silently dropped with a one-line notice (the streaming-fusion path regresses CER, see Phase 4.1+).
+
+Examples:
+
+```bash
+pip install "morseformer[ml,audio,hub]"
+morseformer decode my.wav                  # acoustic-only, default preset
+morseformer decode my.wav --preset prose   # offline + LM fusion
+morseformer live                           # real-time streaming
+morseformer live --preset contest
+morseformer models list --advanced
 ```
 
 ## Release v0.5.3
