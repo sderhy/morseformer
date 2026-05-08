@@ -23,7 +23,7 @@ from morseformer.cli.registry import (
 
 
 def test_version_string_matches_package() -> None:
-    assert __version__ == "0.5.4"
+    assert __version__ == "0.6.0"
 
 
 def test_top_level_parser_has_three_subcommands() -> None:
@@ -47,7 +47,7 @@ def test_models_list_default_only_shows_recommended(capsys) -> None:
     rc = main(["models", "list"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "rnnt_phase5_7" in out
+    assert "rnnt_phase5_8" in out
     assert "lm_phase5_2" in out
     # Legacy 46-vocab models must be hidden by default.
     assert "rnnt_phase3_0" not in out
@@ -64,17 +64,18 @@ def test_models_list_advanced_shows_legacy(capsys) -> None:
 
 def test_known_names_recommended_only() -> None:
     rec = known_names(advanced=False)
-    assert "rnnt_phase5_7" in rec
+    assert "rnnt_phase5_8" in rec
     assert "lm_phase5_2" in rec
     assert "rnnt_phase3_0" not in rec
+    assert "rnnt_phase5_7" not in rec  # demoted to legacy in v0.6.0
 
 
 def test_known_names_advanced_includes_all() -> None:
     assert set(known_names(advanced=True)) == set(REGISTRY)
 
 
-def test_recommended_acoustic_is_phase5_7() -> None:
-    assert RECOMMENDED_ACOUSTIC == "rnnt_phase5_7"
+def test_recommended_acoustic_is_phase5_8() -> None:
+    assert RECOMMENDED_ACOUSTIC == "rnnt_phase5_8"
 
 
 def test_default_preset_is_live() -> None:
@@ -85,9 +86,9 @@ def test_all_four_presets_present() -> None:
     assert set(PRESETS) == {"live", "prose", "contest", "conservative"}
 
 
-def test_live_preset_has_v0_5_3_defaults() -> None:
+def test_live_preset_has_v0_6_0_defaults() -> None:
     p = get_preset("live")
-    assert p.acoustic == "rnnt_phase5_7"
+    assert p.acoustic == "rnnt_phase5_8"
     assert p.confidence_threshold == 0.6
     assert p.digit_threshold == 0.90
     assert p.lm is None
@@ -120,18 +121,18 @@ def test_resolve_model_finds_release_dir(tmp_path: Path) -> None:
     """When release/<file>.pt exists, resolve_model returns it."""
     release = tmp_path / "release"
     release.mkdir()
-    fake = release / "rnnt_phase5_7.pt"
+    fake = release / "rnnt_phase5_8.pt"
     fake.write_bytes(b"")
-    found = resolve_model("rnnt_phase5_7", repo_root=tmp_path)
+    found = resolve_model("rnnt_phase5_8", repo_root=tmp_path)
     assert found == fake
 
 
 def test_resolve_model_falls_back_to_checkpoints(tmp_path: Path) -> None:
-    ckpt = tmp_path / "checkpoints" / "phase5_7"
+    ckpt = tmp_path / "checkpoints" / "phase5_8"
     ckpt.mkdir(parents=True)
     fake = ckpt / "last.pt"
     fake.write_bytes(b"")
-    found = resolve_model("rnnt_phase5_7", repo_root=tmp_path)
+    found = resolve_model("rnnt_phase5_8", repo_root=tmp_path)
     assert found == fake
 
 

@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.5.4](https://img.shields.io/badge/release-v0.5.4-brightgreen.svg)](#release-v054)
+[![Release: v0.6.0](https://img.shields.io/badge/release-v0.6.0-brightgreen.svg)](#release-v060)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.5.3 release** ships a new acoustic (`rnnt_phase5_7.pt`, 4.13 M params, 49-vocab) — a 15 k-step fine-tune of the v0.5.2 acoustic on an **amateur-idiom curriculum**: 5NN cut-numbers (the contest-style spoken `5NN` for `599`) and run-on prosigns where two letters share an inter-letter gap (`UR`, `SK`, `KN`, `BK`). Live-validated on an IC-7300 against FAV22 5-letter groups + a 40 m QSO: explicit `5NN` decoding `× 4-5` vs v0.5.2, the `MI0MO` callsign recovered where v0.5.2 confused it. The v0.5.2 inference-only digit-threshold fix is preserved.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.6.0 release** ships two changes targeting the v0.5.4 LCWO long-form-prose live test: a new acoustic checkpoint `rnnt_phase5_8.pt` (Phase 5.8 English-literary curriculum bootstrapped on Moby Dick + Pride & Prejudice + Sherlock Holmes + Frankenstein, 20 k steps from `phase5_5/last`), and a structural **streaming offline decoder** in `decode_audio` that uses central-zone-commit windowing instead of non-overlapping 6 s chunks. The structural patch eliminates the boundary word-cut artefacts (`MARTYRISÉ → MARTYRISÉ E`, `WANDERED → WANDERE D`, `GOLDEN DAFFODILS → GM ALDEN DAV DAFI RODILS`) that dominated visible errors on long-form prose. The Phase 5.8 acoustic adds literary-English signal on top.
 
 ## Why
 
@@ -69,6 +69,73 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
 ```
+
+## Release v0.6.0
+
+The v0.5.4 LCWO live test (3 hand-keyed-style samples: De Gaulle FR oratory + Al Pacino EN dialogue at 24 / 20 WPM, ~25 min total) confirmed that morseformer produces "fully readable" transcripts on out-of-domain literary prose — but flagged two systematic issues. The dominant visible failure was **window-boundary word cuts**: `MARTYRISÉ → MARTYRISÉ E`, `L'APPUI → L'AP PUI`, `INSTITUTION → INSTITUTIO E`. This was a *structural* problem, not acoustic — `decode_audio` cut the audio into non-overlapping 6 s chunks and stitched the per-chunk hypotheses together, so any word landing on a boundary lost characters. The secondary issue was acoustic / textual: long-form English literary narrative was outside the training distribution (the synthetic mix is QSO-heavy + multilingual cross-section) so words like `WANDERED → WANDERE D`, `BREEZE → BREEZE. E B BKB`.
+
+v0.6.0 ships both fixes.
+
+### Streaming offline decoder (structural)
+
+`decode_audio` now uses a **central-zone-commit** sliding window — the same logic the live streaming decoder has used since v0.2 — for the RNN-T head. Adjacent commit zones tile the audio without gap or overlap, so words never fall in the middle of a "fresh" boundary. Diff on the v0.5.4 `test_8k.wav` Daffodils transcript:
+
+```
+v0.5.4 chunked:    I WANDERE D LONELY  L A CLOU E THAT FLOA S ON HIGH …
+                   GM ALDEN DAV DAFI RODILS, SESIDE THE LAD N, BENEATS T EHE TLES,
+                   L F F FLUN TERING AND DN E DPCING IN THE BREEZE.
+
+v0.6.0 streaming:  IWANDERED LONELY AS ALOUD THAT FLOATS ON HIGH …
+                   GOLDEN DAV DAFFODILS, BESIDE THE LAC, BENEATS THE TLES,
+                   LF F FLUTTERING AND D DACING IN THE BREEZE.
+```
+
+Old behaviour available via `--legacy-chunking` for diagnostic. CTC head still goes through the chunked path (it is a research-only secondary hypothesis).
+
+### Phase 5.8 — English-literary curriculum (acoustic)
+
+`rnnt_phase5_8.pt` is a 20 k-step fine-tune from `phase5_5/last` (NOT from `phase5_7/last` — see Phase 5.7 carryover note) on a new text mix `PHASE_5_8_MIX`:
+
+- New `prose_en` slice at 25 % weight, sampled exclusively from the four EN Gutenberg books (Moby Dick = ~42 % of EN, plus Pride & Prejudice + Sherlock Holmes + Frankenstein, ~3 M chars total)
+- `contest_dense` cut from 30 % to 13 % to free room for `prose_en` while keeping the 5NN gain from Phase 5.7
+- `prose_fr` preserved at 10 % so French diacritic gradient is not lost
+- `operator_run_on_pairs` halved (`UR 0.50→0.25, SK 0.85→0.50, KN 0.70→0.30, BK 0.70→0.30`) to reduce phantom-prosign emissions on continuous prose, which the user report flagged as a Phase 5.7 cost
+- Same channel / jitter / dash:dot / gap-inflation / word-gap-inflation / FP-prior as Phase 5.5
+
+20 k steps, peak LR 5e-5, EMA 0.9999, bf16, batch 12, ~2 h on RTX 3060 Laptop. Bootstrap chain: `phase3_5/best → phase5_3/best → phase5_4/last → phase5_5/last → phase5_8/last`. As with every release since v0.5.1, the dormant `ValidationConfig.matching()` clean-CW val signal saturates fast (< step 1 k) — `last.pt` is the released checkpoint, not `best_rnnt.pt`.
+
+### What's measurable on synthetic test_8k.wav
+
+Phase 5.8 vs Phase 5.7 on the Daffodils synthetic test (5.4-era ground truth). The structural streaming patch contributes most of the visible improvement; Phase 5.8 adds incremental literary-EN signal on top:
+
+| Token | v0.5.4 chunked | v0.5.3 streaming | **v0.6.0 streaming** |
+|---|---|---|---|
+| "WANDERED" | `WANDERE D` | `IWANDERED` | `IWANDERED` ✓ |
+| "FLOATS" | `FLOA S` | `FLOATS` | `FLOATS` ✓ |
+| "FLUTTERING" | `FLUN TERING` | `FLUTERING` | `FLUTTERING` ✓ |
+| "DANCING" | `DN E DPCING` | `DNCINNG` | `DACING` (closer) |
+| "A CLOUD" | `L A CLOU E` | `ALLOUD` | `ALOUD` (closer) |
+
+Live evaluation on the user's LCWO samples (De Gaulle + Pacino) is the real target and was not re-run for the v0.6.0 release notes; the repo's auto-aligned Alice corpus (`data/real/aligned/all_alice.jsonl`) and synthetic FR-mix benches did not regress.
+
+### Limitations of v0.6.0
+
+- Phase 5.8 is incremental on the synthetic distribution (synthetic val is saturated since v0.5.x). The motivating gain — long-form EN literary prose — has not been formally CER-benched yet; the qualitative diff above is on a single in-distribution audio.
+- `prose` preset's LM (`lm_phase5_2`, matched to `PHASE_3_4_MIX`) was reported by the v0.5.4 LCWO test as actively *hurting* on FR oratory (De Gaulle: `L'APPUI → LAEC LAGAP PUI` vs `L'AP PUI` in `live` preset). v0.6.0 does not change the LM. Use `live` preset for FR oratory; reserve `prose` for English ragchew / prose where the LM training corpus is closer.
+- Spurious prosigns at chunk boundaries (`K`, `+`, `BK`) are reduced but not eliminated — Phase 5.8 halved the run-on-pair probabilities, which is a partial fix.
+- `=` (BT, the typographic break prosign) is rendered as the `BK` digraph by the model when it detects a run-on B+K. Mapping `BK → =` at output is left as a future post-processing cosmetic fix; the model still emits the underlying tokens correctly.
+
+### Recommended decode for v0.6.0
+
+Default invocation just works:
+
+```bash
+pip install "morseformer[ml,audio,hub]"
+morseformer decode my_recording.wav        # uses rnnt_phase5_8 + streaming
+morseformer live                            # same model, live streaming
+```
+
+For French oratory or any non-English literary audio, prefer `live` preset over `prose` until the LM is matched (Phase 4.2 territory in the roadmap).
 
 ## Release v0.5.4
 

@@ -33,6 +33,7 @@ import numpy as np
 import torch
 
 from morseformer.core.tokenizer import BLANK_INDEX, ctc_greedy_decode, decode
+from morseformer.decoding.streaming import StreamingConfig, decode_offline
 from morseformer.features import FrontendConfig, extract_features
 from morseformer.models.acoustic import AcousticConfig, AcousticModel
 from morseformer.models.fusion import FusionConfig, greedy_rnnt_decode_with_lm
@@ -133,6 +134,19 @@ def build_parser() -> argparse.ArgumentParser:
                    help="chunk window length in seconds. Matches the "
                         "training-clip length; set to 0 to disable "
                         "chunking.")
+    p.add_argument("--hop-seconds", type=float, default=2.0,
+                   help="streaming-decode hop in seconds for the RNN-T "
+                        "head. Smaller hop → more compute, less risk of "
+                        "word-boundary cuts. Used only when "
+                        "--legacy-chunking is OFF (default).")
+    p.add_argument("--legacy-chunking", action="store_true", default=False,
+                   help="revert to the v0.5.4 non-overlapping chunked "
+                        "decode for both heads. By default (since "
+                        "v0.6.0) the RNN-T head uses the streaming "
+                        "central-zone-commit decoder offline, which "
+                        "eliminates the boundary word-cut artefacts the "
+                        "v0.5.4 LCWO live test surfaced on long prose. "
+                        "Pass this flag to reproduce v0.5.4 behaviour.")
     p.add_argument("--lm-ckpt", type=Path, default=None,
                    help="optional LM checkpoint (e.g. "
                         "checkpoints/lm_phase5_2/best.pt) for shallow-"
@@ -249,11 +263,43 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[decode] lm:    {args.lm_ckpt} "
               f"(λ_lm={args.fusion_weight}, "
               f"thr={args.confidence_threshold})")
-    print(f"[decode] chunks: {len(chunks)} × "
-          f"{(chunk_samples or audio.size) / args.sample_rate:.2f} s")
+
+    # v0.6.0 — RNN-T head uses the streaming central-zone-commit decoder
+    # by default. Eliminates the non-overlapping-chunk word cuts the
+    # v0.5.4 LCWO test surfaced on long prose. CTC head stays on the
+    # chunked path (diagnostic only) — its output has always been the
+    # noisier of the two.
+    use_streaming_rnnt = is_rnnt and not args.legacy_chunking
+    if use_streaming_rnnt:
+        print(f"[decode] mode:  streaming-offline RNN-T "
+              f"(window={args.chunk_seconds:.1f} s, "
+              f"hop={args.hop_seconds:.1f} s)  "
+              f"+ chunked CTC (window={args.chunk_seconds:.1f} s)")
+    else:
+        print(f"[decode] mode:  legacy-chunked, {len(chunks)} × "
+              f"{(chunk_samples or audio.size) / args.sample_rate:.2f} s")
 
     ctc_parts: list[str] = []
     rnnt_parts: list[str] = []
+
+    rnnt_hyp_streaming: str | None = None
+    if use_streaming_rnnt:
+        sd_cfg = StreamingConfig(
+            window_seconds=(args.chunk_seconds if args.chunk_seconds > 0 else 6.0),
+            hop_seconds=args.hop_seconds,
+            sample_rate=args.sample_rate,
+            frame_rate=args.frame_rate,
+            carrier_hz=args.freq,
+            bandwidth_hz=args.bandwidth,
+            confidence_threshold=args.confidence_threshold,
+            digit_threshold=args.digit_threshold,
+        )
+        with torch.no_grad():
+            rnnt_hyp_streaming = decode_offline(
+                model, audio, sd_cfg, device,
+                lm=lm_model,
+                fusion_weight=args.fusion_weight if lm_model is not None else 0.0,
+            )
 
     with torch.no_grad():
         for chunk in chunks:
@@ -269,22 +315,23 @@ def main(argv: list[str] | None = None) -> int:
                 ctc_len = int(enc_lengths[0].item())
                 ctc_parts.append(ctc_greedy_decode(ctc_argmax[:ctc_len]))
 
-                if lm_model is not None:
-                    fusion_cfg = FusionConfig(
-                        fusion_weight=args.fusion_weight,
-                        ilm_weight=0.0,
-                        confidence_threshold=args.confidence_threshold,
-                    )
-                    rnnt_tokens = greedy_rnnt_decode_with_lm(
-                        model, lm_model, x, lengths, fusion_cfg
-                    )[0]
-                else:
-                    rnnt_tokens = model.greedy_rnnt_decode(
-                        x, lengths,
-                        confidence_threshold=args.confidence_threshold,
-                        digit_threshold=args.digit_threshold,
-                    )[0]
-                rnnt_parts.append(decode(rnnt_tokens))
+                if not use_streaming_rnnt:
+                    if lm_model is not None:
+                        fusion_cfg = FusionConfig(
+                            fusion_weight=args.fusion_weight,
+                            ilm_weight=0.0,
+                            confidence_threshold=args.confidence_threshold,
+                        )
+                        rnnt_tokens = greedy_rnnt_decode_with_lm(
+                            model, lm_model, x, lengths, fusion_cfg
+                        )[0]
+                    else:
+                        rnnt_tokens = model.greedy_rnnt_decode(
+                            x, lengths,
+                            confidence_threshold=args.confidence_threshold,
+                            digit_threshold=args.digit_threshold,
+                        )[0]
+                    rnnt_parts.append(decode(rnnt_tokens))
             else:
                 log_probs, lengths_out = model(x, lengths)
                 argmax = log_probs.argmax(dim=-1)[0].cpu().tolist()
@@ -296,7 +343,10 @@ def main(argv: list[str] | None = None) -> int:
     # if a word happens to straddle the chunk boundary.
     ctc_hyp = " ".join(p for p in ctc_parts if p)
     if is_rnnt:
-        rnnt_hyp = " ".join(p for p in rnnt_parts if p)
+        if use_streaming_rnnt:
+            rnnt_hyp = rnnt_hyp_streaming or ""
+        else:
+            rnnt_hyp = " ".join(p for p in rnnt_parts if p)
         print(f"\nCTC  : {ctc_hyp!r}")
         print(f"RNN-T: {rnnt_hyp!r}")
     else:

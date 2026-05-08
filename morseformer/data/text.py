@@ -955,6 +955,23 @@ def sample_prose_fr(
     return _sample_prose_from_lang(rng, "fr", min_chars, max_chars)
 
 
+def sample_prose_en(
+    rng: np.random.Generator,
+    min_chars: int = 5,
+    max_chars: int = 22,
+) -> str:
+    """Sample an English-only prose fragment.
+
+    Phase 5.8 introduces a dedicated English literary slice (Moby Dick,
+    Pride and Prejudice, Sherlock Holmes, Frankenstein) so the model
+    sees long-form narrative English at training-time rather than only
+    QSO + Q-codes + multilingual cross-section. Targets the v0.5.4
+    LCWO live test failure mode where literary English produced
+    visible word-cut + LM-mismatch artefacts.
+    """
+    return _sample_prose_from_lang(rng, "en", min_chars, max_chars)
+
+
 # --------------------------------------------------------------------- #
 # FAV22 corpus + French adversarial sampler (Phase 3.6)
 # --------------------------------------------------------------------- #
@@ -1129,6 +1146,11 @@ class TextMix:
     # `_CONTEST_DENSE_TEMPLATES`. Defaults to 0.0 so older presets are
     # byte-for-byte equivalent.
     contest_dense: float = 0.0
+    # Phase 5.8 — English-only literary prose slice (Moby Dick + the
+    # other 19th-c. EN Gutenberg books). Targets the v0.5.4 LCWO test
+    # gap on long-form English narrative. Defaults to 0.0 so older
+    # presets are byte-for-byte equivalent.
+    prose_en: float = 0.0
 
     def is_random_phase4_only(self) -> bool:
         """True iff ``random_phase4`` is the sole non-zero category.
@@ -1144,6 +1166,7 @@ class TextMix:
             and self.prose == 0 and self.prose_fr == 0
             and self.adversarial_fr == 0
             and self.contest_dense == 0
+            and self.prose_en == 0
         )
 
     def as_array(self) -> np.ndarray:
@@ -1153,6 +1176,7 @@ class TextMix:
                 self.numeric, self.words, self.random,
                 self.prose, self.prose_fr, self.adversarial_fr,
                 self.random_phase4, self.contest_dense,
+                self.prose_en,
             ],
             dtype=np.float64,
         )
@@ -1284,10 +1308,37 @@ PHASE_5_7_MIX = TextMix(
 )
 
 
+# Phase 5.8 — English literary curriculum. The v0.5.4 LCWO live test
+# (De Gaulle FR + Pacino EN at 24/20 WPM, ~25 min total) was readable
+# end-to-end but the dominant visible failure on long-form English was
+# fragmentation + LM-mismatch on literary narrative. The user report
+# also flagged Phase 5.7 prosign over-emission on continuous prose
+# (BK / + / K phantoms at chunk boundaries) as a 5.7-specific cost.
+#
+# Phase 5.8 trades half of the contest_dense weight for a heavy
+# ``prose_en`` slice (25 %) drawn exclusively from the four EN
+# Gutenberg books, with Moby Dick as the largest single contributor.
+# Run-on prosign probabilities are halved at the operator level so
+# the literary curriculum does not make the boundary-prosign issue
+# worse. FR diacritic gradient is preserved at 10 %.
+PHASE_5_8_MIX = TextMix(
+    callsign=0.06,
+    qcode=0.08,
+    qso=0.12,
+    numeric=0.06,
+    words=0.04,
+    random=0.10,
+    prose=0.06,
+    prose_fr=0.10,
+    contest_dense=0.13,
+    prose_en=0.25,
+)
+
+
 _CATEGORIES = (
     "callsign", "qcode", "qso", "numeric", "words",
     "random", "prose", "prose_fr", "adversarial_fr",
-    "random_phase4", "contest_dense",
+    "random_phase4", "contest_dense", "prose_en",
 )
 _SAMPLERS = {
     "callsign": sample_callsign,
@@ -1301,6 +1352,7 @@ _SAMPLERS = {
     "adversarial_fr": sample_french_adversarial,
     "random_phase4": sample_random_chars_phase4,
     "contest_dense": sample_contest_dense,
+    "prose_en": sample_prose_en,
 }
 
 

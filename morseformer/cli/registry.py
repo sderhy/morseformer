@@ -36,12 +36,15 @@ class ModelInfo:
 
 
 REGISTRY: dict[str, ModelInfo] = {
-    "rnnt_phase5_7": ModelInfo(
-        name="rnnt_phase5_7",
-        filename="rnnt_phase5_7.pt",
+    "rnnt_phase5_8": ModelInfo(
+        name="rnnt_phase5_8",
+        filename="rnnt_phase5_8.pt",
         kind="rnnt", vocab=49,
-        description="v0.5.3 acoustic — Phase 5.7 amateur-idiom curriculum "
-                    "(5NN cut-numbers + run-on UR/SK/KN/BK).",
+        description="v0.6.0 acoustic — Phase 5.8 English-literary curriculum "
+                    "(Moby Dick + Pride & Prejudice + Sherlock Holmes + "
+                    "Frankenstein) on top of Phase 5.7 amateur-idiom. "
+                    "Halved run-on prosign probabilities to reduce phantom "
+                    "BK/+/K on continuous prose.",
         recommended=True,
     ),
     "lm_phase5_2": ModelInfo(
@@ -51,6 +54,14 @@ REGISTRY: dict[str, ModelInfo] = {
         description="v0.4.1 LM — matched to PHASE_3_4_MIX, val_ppl 5.626. "
                     "Use at λ=0.7 for shallow fusion on prose audio.",
         recommended=True,
+    ),
+    "rnnt_phase5_7": ModelInfo(
+        name="rnnt_phase5_7",
+        filename="rnnt_phase5_7.pt",
+        kind="rnnt", vocab=49,
+        description="v0.5.3 acoustic — Phase 5.7 amateur-idiom curriculum "
+                    "(5NN cut-numbers + run-on UR/SK/KN/BK). Kept for diff.",
+        recommended=False,
     ),
     "rnnt_phase5_5": ModelInfo(
         name="rnnt_phase5_5",
@@ -108,7 +119,7 @@ REGISTRY: dict[str, ModelInfo] = {
     ),
 }
 
-RECOMMENDED_ACOUSTIC = "rnnt_phase5_7"
+RECOMMENDED_ACOUSTIC = "rnnt_phase5_8"
 RECOMMENDED_LM = "lm_phase5_2"
 
 

@@ -10,6 +10,7 @@ torch = pytest.importorskip("torch")
 from morseformer.decoding.streaming import (  # noqa: E402
     StreamingConfig,
     StreamingDecoder,
+    decode_offline,
 )
 from morseformer.models.acoustic import AcousticConfig  # noqa: E402
 from morseformer.models.rnnt import RnntConfig, RnntModel  # noqa: E402
@@ -197,3 +198,54 @@ def test_invalid_config_rejected() -> None:
         StreamingDecoder(_tiny_rnnt(), _default_cfg(hop_seconds=10), device="cpu")
     with pytest.raises(ValueError):
         StreamingDecoder(_tiny_rnnt(), _default_cfg(sample_rate=8001), device="cpu")
+
+
+# --------------------------------------------------------------------- #
+# decode_offline (Phase C window patch, v0.6.0)
+# --------------------------------------------------------------------- #
+
+
+def test_decode_offline_returns_string() -> None:
+    """v0.6.0 — pure-function offline wrapper used by decode_audio."""
+    rng = np.random.default_rng(11)
+    cfg = _default_cfg()
+    audio = rng.standard_normal(int(cfg.sample_rate * 14.0)).astype(np.float32)
+    out = decode_offline(_tiny_rnnt(), audio, cfg, device="cpu")
+    assert isinstance(out, str)
+
+
+def test_decode_offline_matches_feed_flush() -> None:
+    """``decode_offline`` must equal calling ``feed`` once on the whole
+    clip then ``flush``. This is the contract the offline path relies
+    on: identical central-zone-commit behaviour, no extra logic.
+    """
+    rng = np.random.default_rng(22)
+    cfg = _default_cfg()
+    audio = rng.standard_normal(int(cfg.sample_rate * 12.0)).astype(np.float32)
+
+    # Reference path: manual feed + flush, replicating decode_offline.
+    model = _tiny_rnnt()
+    sd = StreamingDecoder(model, cfg, device="cpu")
+    fragments = sd.feed(audio)
+    tail = sd.flush()
+    expected = ("".join(fragments) + tail).strip()
+
+    # Helper output (uses a separate model instance, but identical state
+    # after init since no training has occurred).
+    actual = decode_offline(model, audio, cfg, device="cpu")
+    assert actual == expected
+
+
+def test_decode_offline_handles_empty_audio() -> None:
+    cfg = _default_cfg()
+    out = decode_offline(_tiny_rnnt(), np.zeros(0, dtype=np.float32), cfg, device="cpu")
+    assert out == ""
+
+
+def test_decode_offline_handles_sub_window_audio() -> None:
+    """Audio shorter than one window should still flush and return a string."""
+    rng = np.random.default_rng(33)
+    cfg = _default_cfg()
+    half_window = rng.standard_normal(cfg.sample_rate * 3).astype(np.float32)
+    out = decode_offline(_tiny_rnnt(), half_window, cfg, device="cpu")
+    assert isinstance(out, str)

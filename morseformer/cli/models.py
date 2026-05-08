@@ -22,7 +22,7 @@ def add_models_parser(sub: argparse._SubParsersAction) -> None:
                          "models. Default: recommended only.")
 
     pd = msub.add_parser("download", help="pre-fetch a model from the Hub")
-    pd.add_argument("name", help="registry name (e.g. rnnt_phase5_7)")
+    pd.add_argument("name", help="registry name (e.g. rnnt_phase5_8)")
 
 
 def run_models(args: argparse.Namespace) -> int:

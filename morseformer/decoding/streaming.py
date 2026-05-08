@@ -338,3 +338,37 @@ class StreamingDecoder:
         if hi < lo:
             hi = lo
         return lo, hi
+
+
+def decode_offline(
+    model: RnntModel,
+    audio: np.ndarray,
+    cfg: StreamingConfig,
+    device: torch.device | str = "cpu",
+    *,
+    lm: GptLM | None = None,
+    fusion_weight: float = 0.0,
+    lm_temperature: float = 1.0,
+) -> str:
+    """Decode a complete audio clip with the streaming central-zone-commit
+    logic, used offline.
+
+    The default ``decode_audio.py`` chunking is non-overlapping 6 s slices,
+    which is exactly what the v0.5.4 LCWO live test surfaced as the
+    dominant visible failure mode on long-form prose: words land on a
+    chunk boundary and split (``MARTYRISÉ → MARTYRISÉ E``,
+    ``L'APPUI → L'AP PUI``). Adjacent central zones tile the audio
+    without gap or overlap, so the joint never falls in the middle of
+    a word and the model never sees a "fresh" boundary at every chunk.
+
+    Pure-function helper around :class:`StreamingDecoder` for the
+    offline ``decode_audio.py`` path. Returns the concatenated text
+    (with a single trailing strip).
+    """
+    sd = StreamingDecoder(
+        model, cfg, device=device,
+        lm=lm, fusion_weight=fusion_weight, lm_temperature=lm_temperature,
+    )
+    fragments = sd.feed(np.asarray(audio, dtype=np.float32))
+    tail = sd.flush()
+    return ("".join(fragments) + tail).strip()

@@ -22,6 +22,7 @@ SOURCES: list[tuple[str, int, str]] = [
     ("en", 1342, "Pride and Prejudice (Austen)"),
     ("en", 1661, "Adventures of Sherlock Holmes (Doyle)"),
     ("en", 84, "Frankenstein (Shelley)"),
+    ("en", 2701, "Moby Dick (Melville)"),
     # French
     ("fr", 17489, "Les Miserables Vol 1 (Hugo)"),
     ("fr", 13951, "Madame Bovary (Flaubert)"),

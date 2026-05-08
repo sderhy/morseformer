@@ -43,6 +43,7 @@ from morseformer.data.text import (
     PHASE_3_6_MIX,
     PHASE_4_0_MIX,
     PHASE_5_7_MIX,
+    PHASE_5_8_MIX,
     TextMix,
     sample_random_chars_phase4,
     sample_text,
@@ -615,6 +616,61 @@ class DatasetConfig:
             qrm_offset_range_hz=(-300.0, 300.0),
             qrm_rel_db_range=(-18.0, -8.0),
             text_mix=PHASE_3_4_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_5_8(cls, **overrides) -> "DatasetConfig":
+        """Phase 5.8 English-literary curriculum.
+
+        Targets the v0.5.4 LCWO live test gap on long-form English
+        narrative (Pacino *Scent of a Woman* monologue, 22 minutes).
+        Two changes vs Phase 5.7:
+
+        * ``text_mix = PHASE_5_8_MIX`` — replaces 17 of the 30 %
+          ``contest_dense`` weight with a 25 % ``prose_en`` slice
+          drawn exclusively from the four EN Gutenberg books (Moby
+          Dick + Pride and Prejudice + Sherlock Holmes + Frankenstein,
+          Moby Dick = ~42 % of the EN text). Keeps a 13 %
+          ``contest_dense`` floor so the 5NN gain from Phase 5.7 is
+          not lost. FR diacritic gradient preserved at ``prose_fr=0.10``.
+        * ``operator_run_on_pairs`` — halved relative to Phase 5.7
+          (``UR 0.25, SK 0.50, KN 0.30, BK 0.30``) following the user
+          report flagging Phase 5.7 prosign over-emission as
+          unfavourable on continuous prose. The fallback values came
+          straight from ``project_phase5_7_result.md``'s "if BK noise
+          becomes a problem" recipe.
+
+        Bootstrap target: ``checkpoints/phase5_5/last.pt`` — NOT
+        ``phase5_7/last.pt``, per the carryover don't from
+        ``project_phase5_7_result.md``.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            operator_word_gap_inflation_range=(1.0, 8.0),
+            operator_run_on_pairs=(
+                ("U", "R", 0.25),
+                ("S", "K", 0.50),
+                ("K", "N", 0.30),
+                ("B", "K", 0.30),
+            ),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_5_8_MIX,
         )
         base.update(overrides)
         return cls(**base)
