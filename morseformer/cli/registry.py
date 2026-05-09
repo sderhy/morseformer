@@ -177,7 +177,7 @@ def resolve_model(name: str, *, repo_root: Path | None = None) -> Path:
         raise SystemExit(
             f"[morseformer] '{name}' is not in release/ or checkpoints/, "
             f"and huggingface_hub is not installed.\n"
-            f"  pip install 'morseformer[hub]'\n"
+            f"  pip install --upgrade morseformer\n"
             f"or download the file manually from "
             f"https://huggingface.co/{HF_REPO} and place it at "
             f"{release}."

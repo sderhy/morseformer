@@ -133,7 +133,8 @@ def _open_recorder(capture_rate: int, device_name: str | None):
     except ImportError as e:
         raise SystemExit(
             "[decode_live] pasimple is not installed. "
-            "Install it with: pip install -e '.[audio]'"
+            "Install it with: pip install 'morseformer[live]' "
+            "(or, from a checkout: pip install -e '.[live]')"
         ) from e
     return pasimple.PaSimple(
         direction=pasimple.PA_STREAM_RECORD,

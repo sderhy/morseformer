@@ -164,13 +164,12 @@ Honest about what v0.4 does and does not do:
 ### Offline decode of a `.wav` file
 
 ```bash
-pip install torch torchaudio scipy numpy
 git clone https://github.com/sderhy/morseformer
 cd morseformer
-pip install -e ".[audio]"
+pip install -e ".[live]"
 
-# Download the v0.5.2 checkpoints (same files as v0.5.1)
-pip install huggingface_hub
+# Download the v0.5.2 checkpoints (same files as v0.5.1).
+# huggingface_hub is now a base dependency, no extra install needed.
 hf download sderhy/morseformer rnnt_phase5_5.pt \
     --local-dir checkpoints/phase5_5
 hf download sderhy/morseformer lm_phase5_2.pt \

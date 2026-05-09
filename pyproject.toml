@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "morseformer"
-version = "0.6.0"
+version = "0.6.1"
 description = "Open-source transformer-based Morse/CW decoder with a built-in ham-specialised language model"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -34,14 +34,15 @@ classifiers = [
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
+    "torch>=2.1",
+    "torchaudio>=2.1",
+    "huggingface_hub>=0.25",
 ]
 
 [project.optional-dependencies]
-audio = ["pasimple>=0.0.3"]
-ml = ["torch>=2.1", "torchaudio>=2.1"]
+live = ["pasimple>=0.0.3"]
 dev = ["pytest>=7", "ruff>=0.1", "matplotlib>=3.7"]
-training = ["torch>=2.1", "wandb", "hydra-core", "tqdm"]
-hub = ["huggingface_hub>=0.25"]
+training = ["wandb", "hydra-core", "tqdm"]
 
 [project.urls]
 Homepage = "https://github.com/sderhy/morseformer"

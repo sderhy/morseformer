@@ -16,26 +16,38 @@ Existing open-source CW decoders (`fldigi`, `cwdecoder`, `MRP40`) rely on hand-t
 ## Quick start
 
 ```bash
-# Pip-install — first-time model fetch is automatic from HuggingFace.
-pip install "morseformer[ml,audio,hub]"
+# 1. Create and activate a virtual environment (Python 3.10+).
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
 
-# Offline file decode — defaults to the `live` preset (rnnt_phase5_7
-# + threshold 0.6 + digit-threshold 0.90).
+# 2a. Decode an audio file (offline). First run fetches the model from HuggingFace.
+pip install morseformer
 morseformer decode my_recording.wav
 
-# Same with LM shallow fusion (λ=0.7) for prose / ragchew audio.
+# 2b. Or decode a live receiver in real time (PulseAudio input).
+pip install "morseformer[live]"
+morseformer live
+```
+
+That's it. **No GPU needed** — the decoder runs on CPU by default.
+
+> **No Nvidia card? Save ~4 GB.** PyTorch ships a 2-3 GB GPU build by default. On a CPU-only machine, install the lightweight CPU build *before* `morseformer`:
+> ```bash
+> pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+> pip install morseformer            # or "morseformer[live]"
+> ```
+
+### More options
+
+```bash
+# LM shallow fusion (λ=0.7) for prose / ragchew audio.
 morseformer decode my_recording.wav --preset prose
 
-# Real-time streaming on a live receiver (PulseAudio input). Tune your
-# rig to zero-beat at 600 Hz with a ~500 Hz CW filter.
-morseformer live
+# Live presets — looser for fast exchanges, tighter for very noisy bands.
+morseformer live --preset contest
+morseformer live --preset conservative
 
-# Tweak preset and / or override the model.
-morseformer live --preset contest         # looser thresholds, fast exchanges
-morseformer live --preset conservative    # tightened, very noisy bands
-
-# Inspect / download checkpoints. Default shows the recommended pair;
-# --advanced lists every legacy version on HF.
+# Inspect / download checkpoints.
 morseformer models list
 morseformer models list --advanced
 morseformer models download rnnt_phase5_7
@@ -48,7 +60,7 @@ Developing from a checkout? Same CLI, plus the existing scripts:
 ```bash
 git clone git@github.com:sderhy/morseformer.git
 cd morseformer
-pip install -e ".[dev,audio,ml,hub]"
+pip install -e ".[dev,live]"
 pytest -q
 
 # CLI works against local release/ and checkpoints/ trees, no Hub fetch.
@@ -130,7 +142,7 @@ Live evaluation on the user's LCWO samples (De Gaulle + Pacino) is the real targ
 Default invocation just works:
 
 ```bash
-pip install "morseformer[ml,audio,hub]"
+pip install "morseformer[live]"             # or just `pip install morseformer` for offline only
 morseformer decode my_recording.wav        # uses rnnt_phase5_8 + streaming
 morseformer live                            # same model, live streaming
 ```
@@ -151,7 +163,7 @@ Packaging release — **no model change** (`rnnt_phase5_7.pt` unchanged from v0.
 Examples:
 
 ```bash
-pip install "morseformer[ml,audio,hub]"
+pip install "morseformer[live]"
 morseformer decode my.wav                  # acoustic-only, default preset
 morseformer decode my.wav --preset prose   # offline + LM fusion
 morseformer live                           # real-time streaming
