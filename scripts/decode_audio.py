@@ -33,6 +33,7 @@ import numpy as np
 import torch
 
 from morseformer.core.tokenizer import BLANK_INDEX, ctc_greedy_decode, decode
+from morseformer.decoding.postprocess import format_output
 from morseformer.decoding.streaming import StreamingConfig, decode_offline
 from morseformer.features import FrontendConfig, extract_features
 from morseformer.models.acoustic import AcousticConfig, AcousticModel
@@ -341,12 +342,12 @@ def main(argv: list[str] | None = None) -> int:
     # Join adjacent chunks with a single space — the tokenizer also uses
     # ``' '`` for inter-element gap, so this preserves readability even
     # if a word happens to straddle the chunk boundary.
-    ctc_hyp = " ".join(p for p in ctc_parts if p)
+    ctc_hyp = format_output(" ".join(p for p in ctc_parts if p))
     if is_rnnt:
         if use_streaming_rnnt:
-            rnnt_hyp = rnnt_hyp_streaming or ""
+            rnnt_hyp = format_output(rnnt_hyp_streaming or "")
         else:
-            rnnt_hyp = " ".join(p for p in rnnt_parts if p)
+            rnnt_hyp = format_output(" ".join(p for p in rnnt_parts if p))
         print(f"\nCTC  : {ctc_hyp!r}")
         print(f"RNN-T: {rnnt_hyp!r}")
     else:

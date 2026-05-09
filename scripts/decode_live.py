@@ -38,6 +38,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
+from morseformer.decoding.postprocess import StreamFormatter
 from morseformer.decoding.streaming import StreamingConfig, StreamingDecoder
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.lm import GptLM, LmConfig
@@ -307,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
     started_at = time.time()
     print(f"[{time.strftime('%H:%M:%S')}] listening…", flush=True)
 
+    formatter = StreamFormatter()
     try:
         while not should_stop["flag"]:
             buf = recorder.read(read_bytes)
@@ -316,11 +318,18 @@ def main(argv: list[str] | None = None) -> int:
             )
             for fragment in sd.feed(audio):
                 if fragment:
-                    print(fragment, end="", flush=True)
+                    out = formatter.feed(fragment)
+                    if out:
+                        print(out, end="", flush=True)
         # Final flush on Ctrl+C — commit the trailing audio.
         tail = sd.flush()
         if tail:
-            print(tail, end="", flush=True)
+            out = formatter.feed(tail)
+            if out:
+                print(out, end="", flush=True)
+        out = formatter.flush()
+        if out:
+            print(out, end="", flush=True)
         print()  # newline after stream end
     finally:
         recorder.close()
