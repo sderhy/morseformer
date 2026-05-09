@@ -1,0 +1,5 @@
+{"id": "lcwo-de-gaulle-24wpm", "audio": "data/bench/lcwo-de-gaulle-24wpm.wav", "gt": "data/bench/de-gaulle.txt", "lang": "fr", "wpm": 24, "source": "lcwo", "kind": "prose"}
+{"id": "lcwo-pacino-24wpm", "audio": "data/bench/lcwo-pacino-24wpm.wav", "gt": "data/bench/pacino.txt", "lang": "en", "wpm": 24, "source": "lcwo", "kind": "prose"}
+{"id": "lcwo-pacino-20wpm", "audio": "data/bench/lcwo-pacino-20wpm.wav", "gt": "data/bench/pacino.txt", "lang": "en", "wpm": 20, "source": "lcwo", "kind": "prose"}
+{"id": "lcwo-jme-voyais-deja-22wpm", "audio": "data/bench/jme-voyais-dejà-22wpm.wav", "gt": "data/bench/jme-voyais-dejà.txt", "lang": "fr", "wpm": 22, "source": "lcwo", "kind": "song"}
+{"id": "websdr-fav22", "audio": "data/bench/websdr.wav", "gt": "data/bench/websdr.txt", "lang": "en", "wpm": null, "source": "websdr", "kind": "5letter"}
