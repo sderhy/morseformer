@@ -4,3 +4,4 @@
 {"id": "lcwo-jme-voyais-deja-22wpm", "audio": "data/bench/jme-voyais-dejà-22wpm.wav", "gt": "data/bench/jme-voyais-dejà.txt", "lang": "fr", "wpm": 22, "source": "lcwo", "kind": "song"}
 {"id": "websdr-fav22", "audio": "data/bench/websdr.wav", "gt": "data/bench/websdr.txt", "lang": "en", "wpm": null, "source": "websdr", "kind": "5letter"}
 {"id": "contest-synth-24wpm", "audio": "data/bench/contest_synth_24wpm.wav", "gt": "data/bench/contest_synth.txt", "lang": "en", "wpm": 24, "source": "morse_synth", "kind": "contest"}
+{"id": "callsign_lcwo_001", "audio": "data/bench/callsign_lcwo_001.wav", "gt": "data/bench/callsign_lcwo_001.txt", "lang": "en", "wpm": 20, "source": "lcwo_callsigns", "kind": "callsign"}
