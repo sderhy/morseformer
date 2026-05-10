@@ -44,6 +44,7 @@ from morseformer.data.text import (
     PHASE_4_0_MIX,
     PHASE_5_7_MIX,
     PHASE_5_8_MIX,
+    PHASE_5_9_MIX,
     TextMix,
     sample_random_chars_phase4,
     sample_text,
@@ -671,6 +672,52 @@ class DatasetConfig:
             qrm_offset_range_hz=(-300.0, 300.0),
             qrm_rel_db_range=(-18.0, -8.0),
             text_mix=PHASE_5_8_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_5_9(cls, **overrides) -> "DatasetConfig":
+        """Phase 5.9 random-letter-group densification.
+
+        Same channel + jitter envelope as Phase 5.5, with the
+        ``text_mix`` switched to :data:`PHASE_5_9_MIX` — a 20 %
+        ``letter_groups`` slice (FAV22 / websdr-style strict 5-char
+        cipher groups, see :func:`morseformer.data.text.sample_letter_groups`)
+        funded mostly by trimming the generic ``random`` budget. Targets
+        the single large bench gap surfaced on 2026-05-09 (websdr
+        clip ~10.4 % CER under live preset, vs <2.5 % on every prose
+        clip — see ``project_bench_lcwo_v1``).
+
+        No run-on prosign augmentation: 5_5 baseline does not have it
+        and the bench A/B (5_7 with run-on vs 5_8 with run-on halved)
+        showed both at parity, so we keep this variable fixed at the
+        baseline to isolate the text-mix effect.
+
+        Bootstrap target: ``checkpoints/phase5_5/last.pt``. Don't
+        bootstrap from ``phase5_7/last.pt`` or ``phase5_8/last.pt`` —
+        those are siblings of 5_5, not ancestors of 5_9 (carryover
+        ``don't`` from ``project_bench_lcwo_v1``).
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            operator_word_gap_inflation_range=(1.0, 8.0),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_5_9_MIX,
         )
         base.update(overrides)
         return cls(**base)

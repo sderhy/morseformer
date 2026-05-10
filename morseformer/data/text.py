@@ -620,6 +620,79 @@ def sample_random_chars(rng: np.random.Generator) -> str:
 
 
 # --------------------------------------------------------------------- #
+# Phase 5.9 — strict 5-character cipher groups (FAV22 / websdr style)
+# --------------------------------------------------------------------- #
+
+# Punctuation tokens that may replace one letter inside a "mixed" 5-char
+# group. All are in the 49-token vocabulary (no space variants — groups
+# are exactly 5 non-space characters).
+_LETTER_GROUP_PUNCT: tuple[str, ...] = (
+    ".", ",", "?", "!", "/", "=", "+", "-",
+)
+
+
+def sample_letter_groups(rng: np.random.Generator) -> str:
+    """Cipher-style 5-character groups (FAV22 / websdr practice format).
+
+    Each utterance is 1-3 groups of exactly 5 characters separated by
+    single spaces. Group types are drawn per-group:
+
+        * 0.65 — 5 random A-Z (with rare É/À, ~3 % each, to keep the
+          accent tokens in the gradient);
+        * 0.20 — 5 random 0-9;
+        * 0.10 — 4 random A-Z with one punctuation/prosign character
+          spliced in at a random index (matches the
+          ``MNGKT /.?,'`` style mixed-token rows in real FAV22 transmissions);
+        * 0.05 — 5 random punctuation symbols (the all-punct rows that
+          do appear in HST / FAV22 traffic, e.g. ``.?,'%``).
+
+    Phase 5.9 introduces this category to close the 10.4 % CER gap on
+    ``data/bench/websdr.wav`` (FAV22-style 5-letter group practice)
+    surfaced by the first reproducible bench run on 2026-05-09. The
+    existing ``random`` sampler emits variable-length clumps (3-8) and
+    only sometimes runs as multi-group, so the model has near-zero
+    exposure to the strict 5-char rhythm + punctuation-only bursts that
+    HST traffic uses heavily.
+    """
+    n_groups = int(rng.integers(1, 4))  # 1..3 groups per utterance
+    groups: list[str] = []
+    for _ in range(n_groups):
+        r = rng.random()
+        if r < 0.65:
+            chars: list[str] = []
+            for _ in range(5):
+                rr = rng.random()
+                if rr < 0.94:
+                    chars.append(chr(ord("A") + int(rng.integers(0, 26))))
+                elif rr < 0.97:
+                    chars.append("É")
+                else:
+                    chars.append("À")
+            groups.append("".join(chars))
+        elif r < 0.85:
+            groups.append(_random_digits(rng, 5))
+        elif r < 0.95:
+            base = [
+                chr(ord("A") + int(rng.integers(0, 26))) for _ in range(4)
+            ]
+            punct = _LETTER_GROUP_PUNCT[
+                int(rng.integers(0, len(_LETTER_GROUP_PUNCT)))
+            ]
+            pos = int(rng.integers(0, 5))
+            base.insert(pos, punct)
+            groups.append("".join(base[:5]))
+        else:
+            puncts = [
+                _LETTER_GROUP_PUNCT[
+                    int(rng.integers(0, len(_LETTER_GROUP_PUNCT)))
+                ]
+                for _ in range(5)
+            ]
+            groups.append("".join(puncts))
+    return " ".join(groups)
+
+
+# --------------------------------------------------------------------- #
 # Phase 4.0 — pure-acoustic random chars
 # --------------------------------------------------------------------- #
 #
@@ -1151,6 +1224,10 @@ class TextMix:
     # gap on long-form English narrative. Defaults to 0.0 so older
     # presets are byte-for-byte equivalent.
     prose_en: float = 0.0
+    # Phase 5.9 — strict 5-character cipher groups (FAV22 / websdr).
+    # See `sample_letter_groups`. Defaults to 0.0 so older presets are
+    # byte-for-byte equivalent.
+    letter_groups: float = 0.0
 
     def is_random_phase4_only(self) -> bool:
         """True iff ``random_phase4`` is the sole non-zero category.
@@ -1167,6 +1244,7 @@ class TextMix:
             and self.adversarial_fr == 0
             and self.contest_dense == 0
             and self.prose_en == 0
+            and self.letter_groups == 0
         )
 
     def as_array(self) -> np.ndarray:
@@ -1176,7 +1254,7 @@ class TextMix:
                 self.numeric, self.words, self.random,
                 self.prose, self.prose_fr, self.adversarial_fr,
                 self.random_phase4, self.contest_dense,
-                self.prose_en,
+                self.prose_en, self.letter_groups,
             ],
             dtype=np.float64,
         )
@@ -1335,10 +1413,37 @@ PHASE_5_8_MIX = TextMix(
 )
 
 
+# Phase 5.9 — random-letter-group densification. The first reproducible
+# bench (`eval/bench_lcwo.py`, 2026-05-09) showed Phase 5.7 and Phase 5.8
+# at parity on prose (mean CER ≈ 3.5 %) but a single large gap on the
+# `websdr` clip (5-letter FAV22-style groups, ~10.4 % CER) — 4-5x worse
+# than every prose clip. The `random` sampler emits variable-length
+# clumps (3-8) and only multi-groups 30 % of the time, so the model has
+# near-zero exposure to the strict 5-char rhythm + punctuation-only
+# bursts that HST / FAV22 traffic uses. Phase 5.9 introduces a dedicated
+# ``letter_groups`` slice (20 %) drawn by :func:`sample_letter_groups`,
+# trades 10 pp off the generic ``random`` budget, and preserves the
+# Phase-5.7 ``contest_dense`` floor so the 5NN gain is not lost. FR
+# diacritic gradient stays at 8 % (``prose_fr``) — see ``feedback_fr_scope``.
+PHASE_5_9_MIX = TextMix(
+    callsign=0.10,
+    qcode=0.10,
+    qso=0.15,
+    numeric=0.10,
+    words=0.04,
+    random=0.08,
+    prose=0.05,
+    prose_fr=0.08,
+    contest_dense=0.10,
+    letter_groups=0.20,
+)
+
+
 _CATEGORIES = (
     "callsign", "qcode", "qso", "numeric", "words",
     "random", "prose", "prose_fr", "adversarial_fr",
     "random_phase4", "contest_dense", "prose_en",
+    "letter_groups",
 )
 _SAMPLERS = {
     "callsign": sample_callsign,
@@ -1353,6 +1458,7 @@ _SAMPLERS = {
     "random_phase4": sample_random_chars_phase4,
     "contest_dense": sample_contest_dense,
     "prose_en": sample_prose_en,
+    "letter_groups": sample_letter_groups,
 }
 
 

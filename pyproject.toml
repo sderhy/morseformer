@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "morseformer"
-version = "0.6.1"
+version = "0.6.2"
 description = "Open-source transformer-based Morse/CW decoder with a built-in ham-specialised language model"
 readme = "README.md"
 requires-python = ">=3.10"

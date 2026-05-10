@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](#)
-[![Release: v0.6.0](https://img.shields.io/badge/release-v0.6.0-brightgreen.svg)](#release-v060)
+[![Release: v0.6.2](https://img.shields.io/badge/release-v0.6.2-brightgreen.svg)](#release-v062)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.6.0 release** ships two changes targeting the v0.5.4 LCWO long-form-prose live test: a new acoustic checkpoint `rnnt_phase5_8.pt` (Phase 5.8 English-literary curriculum bootstrapped on Moby Dick + Pride & Prejudice + Sherlock Holmes + Frankenstein, 20 k steps from `phase5_5/last`), and a structural **streaming offline decoder** in `decode_audio` that uses central-zone-commit windowing instead of non-overlapping 6 s chunks. The structural patch eliminates the boundary word-cut artefacts (`MARTYRISÉ → MARTYRISÉ E`, `WANDERED → WANDERE D`, `GOLDEN DAFFODILS → GM ALDEN DAV DAFI RODILS`) that dominated visible errors on long-form prose. The Phase 5.8 acoustic adds literary-English signal on top.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The **v0.6.2 release** reverts the recommended acoustic from `rnnt_phase5_8.pt` (v0.6.0/v0.6.1) to **`rnnt_phase5_5.pt`** after the first reproducible bench (`eval/bench_lcwo.py`, 6 real-audio clips: LCWO De Gaulle FR + Pacino EN at 24/20 WPM + Aznavour FR + websdr 5-letter + a synthetic contest exchange) showed Phase 5.5 outperforms 5.7 (−22 % mean CER) and 5.8 (−24 %). The streaming-offline decoder shipped in v0.6.0 stays — it's responsible for most of v0.6.0's visible gain. Phase 5.8 trained on extra English literary text without a counter-test against the bootstrap source, and the bench reveals that the curriculum hurt prose + random-group accuracy more than it helped. v0.6.2 is a code-only revert: `rnnt_phase5_5.pt` was already on the HF Hub, so no new weights are uploaded.
 
 ## Why
 
@@ -81,6 +81,36 @@ Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
 CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
 ```
+
+## Release v0.6.2
+
+The first reproducible real-audio bench (`eval/bench_lcwo.py`, 6 clips, identical decoder) ran on 2026-05-09 against four acoustic checkpoints — the bootstrap source `rnnt_phase5_5` plus its three descendants `rnnt_phase5_7` (v0.5.3), `rnnt_phase5_8` (v0.6.0/v0.6.1), and the new `rnnt_phase5_9`. The result inverts the live-test gut feel that drove v0.5.3 and v0.6.0 ship decisions:
+
+| Acoustic            | de-gaulle FR | pacino-24 EN | pacino-20 EN | jme-voyais FR | websdr 5-letter | contest-synth | mean CER |
+|---------------------|--------------|--------------|--------------|---------------|-----------------|---------------|----------|
+| **rnnt_phase5_5**   | **1.97 %**   | **1.58 %**   | **1.68 %**   | 1.30 %        | **8.00 %**      | **2.57 %**    | **2.85 %** |
+| rnnt_phase5_7       | 1.97 %       | 2.13 %       | 2.41 %       | **0.99 %**    | 10.22 %         | 5.14 %        | 3.81 %   |
+| rnnt_phase5_8       | 2.30 %       | 1.86 %       | 2.35 %       | 1.03 %        | 10.44 %         | 5.61 %        | 3.93 %   |
+| rnnt_phase5_9       | 3.29 %       | 2.16 %       | 2.77 %       | 1.17 %        | 10.00 %         | 4.21 %        | 3.93 %   |
+
+`rnnt_phase5_5` wins 5/6 clips (jme-voyais 22 wpm goes to 5.7 by 0.31 pp), and beats the v0.6.0 release by **24 % relative mean CER**. Most striking: on the synthetic contest clip (30 contest_dense exchanges at 24 wpm), `rnnt_phase5_5` posts 2.57 % CER even though it had **zero contest_dense in its training mix** — vs 5.14 % for `rnnt_phase5_7` (30 % contest_dense in training) and 5.61 % for `rnnt_phase5_8` (13 %). The contest_dense curriculum did not improve contest performance; it just degraded everything else.
+
+`rnnt_phase5_9` was a fresh 15 k-step fine-tune from `phase5_5/last` on a new 20 % `letter_groups` mix (FAV22-style strict 5-char cipher groups, see `morseformer.data.text.sample_letter_groups`) targeting the websdr 8 % CER gap. It regressed on every clip including its own target (8.00 → 10.00 % on websdr). Hypothesis: the mix amputated `prose` / `prose_fr` budget enough to trigger catastrophic forgetting; 15 k steps on a divergent mix is too long for a fine-tune. Code kept under `--curriculum phase5_9` for reproducibility.
+
+### What v0.6.2 changes
+
+- `morseformer/cli/registry.py`: `RECOMMENDED_ACOUSTIC = "rnnt_phase5_5"`, `rnnt_phase5_8` demoted to `recommended=False`.
+- `morseformer/cli/presets.py`: all four presets (`live`, `prose`, `contest`, `conservative`) switch to `rnnt_phase5_5`.
+- No model upload — `rnnt_phase5_5.pt` has been on the HF Hub since v0.5.1.
+- The streaming offline decoder, the digit-threshold gate, the run-on-prosign cosmetic (`BK → =`), and the rest of v0.6.x's structural improvements stay.
+
+After installing the upgrade, `morseformer decode my.wav` automatically downloads / uses `rnnt_phase5_5.pt` instead of `rnnt_phase5_8.pt`.
+
+### Caveats and open questions
+
+- **Bench is synthetic-leaning.** 4 of 6 clips are LCWO synthesis; 1 is a real websdr; 1 is a `morse_synth`-rendered contest exchange that does **not** apply the `operator_run_on_pairs` augmentation that 5.7 and 5.8 trained on. The latter slightly biases against 5_7/5_8 on contest material — but the prose + random-group dominance of 5_5 holds independently.
+- **No live-radio bench yet.** v0.6.2 is shipped on the strength of the LCWO + websdr corpus alone. Live IC-7300 / SDR sessions remain the qualitative source-of-truth; we expect 5_5 to match its v0.5.1 / v0.5.2 live record.
+- **Direction for the next phase.** Letter_groups densification is not a dead end — Phase 5.9 just over-rotated. A more conservative retry (5-8 % `letter_groups`, full prose proportions preserved, ≤ 8 k steps) is the natural Phase 5.10. Bench gates every ship from now on.
 
 ## Release v0.6.0
 

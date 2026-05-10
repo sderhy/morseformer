@@ -13,10 +13,10 @@ A preset bundles the four user-facing knobs that matter at inference:
 
 Preset choice rationale:
 
-- ``live`` (default): v0.5.3 streaming defaults on top of the v0.6.0
-  acoustic. Threshold 0.6 + digit-threshold 0.90 cure the 5.1/5.2
-  live FP modes; the v0.6.0 acoustic adds long-form English literary
-  signal from Phase 5.8.
+- ``live`` (default): v0.5.3 streaming defaults on top of the **v0.6.2
+  acoustic** (Phase 5.5, reverted from 5.8 after bench LCWO v1).
+  Threshold 0.6 + digit-threshold 0.90 cure the 5.1/5.2 live FP modes;
+  the 5.5 acoustic was originally tuned with these same thresholds.
 - ``prose``: same acoustic + LM fusion λ=0.7 for offline file decoding
   on prose audio (Alice gain −11.4 % CER on n=120).
 - ``contest``: relaxed thresholds for fast contest-style exchanges
@@ -46,7 +46,7 @@ PRESETS: dict[str, Preset] = {
         name="live",
         description="v0.5.3 streaming defaults. Best for IC-7300 + receiver "
                     "real-time decode.",
-        acoustic="rnnt_phase5_8",
+        acoustic="rnnt_phase5_5",
         confidence_threshold=0.6,
         digit_threshold=0.90,
         lm=None,
@@ -57,7 +57,7 @@ PRESETS: dict[str, Preset] = {
         description="Offline file decode with LM shallow fusion (λ=0.7). "
                     "Best for poetry / ragchew / book reading from a "
                     "recorded .wav.",
-        acoustic="rnnt_phase5_8",
+        acoustic="rnnt_phase5_5",
         confidence_threshold=0.6,
         digit_threshold=0.90,
         lm="lm_phase5_2",
@@ -67,7 +67,7 @@ PRESETS: dict[str, Preset] = {
         name="contest",
         description="Looser thresholds for fast contest exchanges where "
                     "missing characters costs more than rare false positives.",
-        acoustic="rnnt_phase5_8",
+        acoustic="rnnt_phase5_5",
         confidence_threshold=0.5,
         digit_threshold=0.80,
         lm=None,
@@ -77,7 +77,7 @@ PRESETS: dict[str, Preset] = {
         name="conservative",
         description="Tightened thresholds for very noisy bands. Prefers "
                     "silence to a guess.",
-        acoustic="rnnt_phase5_8",
+        acoustic="rnnt_phase5_5",
         confidence_threshold=0.75,
         digit_threshold=0.95,
         lm=None,

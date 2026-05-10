@@ -36,16 +36,30 @@ class ModelInfo:
 
 
 REGISTRY: dict[str, ModelInfo] = {
+    "rnnt_phase5_9": ModelInfo(
+        name="rnnt_phase5_9",
+        filename="rnnt_phase5_9.pt",
+        kind="rnnt", vocab=49,
+        description="Phase 5.9 acoustic — failed retrain. Random-letter-"
+                    "group densification (20 % FAV22-style strict 5-char "
+                    "cipher groups + 10 % contest_dense) bootstrapped from "
+                    "phase5_5/last for 15 k steps. Regressed on 6/6 bench "
+                    "clips including its own websdr target (8.00 → 10.00 "
+                    "%% CER). Kept in registry for reproducibility; never "
+                    "ship.",
+        recommended=False,
+    ),
     "rnnt_phase5_8": ModelInfo(
         name="rnnt_phase5_8",
         filename="rnnt_phase5_8.pt",
         kind="rnnt", vocab=49,
-        description="v0.6.0 acoustic — Phase 5.8 English-literary curriculum "
-                    "(Moby Dick + Pride & Prejudice + Sherlock Holmes + "
-                    "Frankenstein) on top of Phase 5.7 amateur-idiom. "
-                    "Halved run-on prosign probabilities to reduce phantom "
-                    "BK/+/K on continuous prose.",
-        recommended=True,
+        description="v0.6.0/v0.6.1 acoustic — Phase 5.8 English-literary "
+                    "curriculum (Moby Dick + Pride & Prejudice + Sherlock "
+                    "Holmes + Frankenstein) on top of Phase 5.7 amateur-"
+                    "idiom. Demoted at v0.6.2: bench LCWO v1 showed it "
+                    "loses ~24 %% relative mean CER vs phase5_5 on real-"
+                    "audio clips. Kept for reproducibility.",
+        recommended=False,
     ),
     "lm_phase5_2": ModelInfo(
         name="lm_phase5_2",
@@ -67,9 +81,15 @@ REGISTRY: dict[str, ModelInfo] = {
         name="rnnt_phase5_5",
         filename="rnnt_phase5_5.pt",
         kind="rnnt", vocab=49,
-        description="v0.5.1 / v0.5.2 acoustic — Phase 5.5 long inter-word "
-                    "silence curriculum.",
-        recommended=False,
+        description="v0.5.1 / v0.5.2 / **v0.6.2** acoustic — Phase 5.5 "
+                    "long inter-word silence curriculum. Promoted to "
+                    "recommended at v0.6.2 after bench LCWO v1 confirmed "
+                    "it outperforms phase5_7 (-22 %% mean CER) and "
+                    "phase5_8 (-24 %%) on real-audio LCWO + websdr clips, "
+                    "incl. on contest material despite zero contest_dense "
+                    "training. Remained the bootstrap source for every "
+                    "subsequent phase.",
+        recommended=True,
     ),
     "rnnt_phase5_4": ModelInfo(
         name="rnnt_phase5_4",
@@ -119,7 +139,7 @@ REGISTRY: dict[str, ModelInfo] = {
     ),
 }
 
-RECOMMENDED_ACOUSTIC = "rnnt_phase5_8"
+RECOMMENDED_ACOUSTIC = "rnnt_phase5_5"
 RECOMMENDED_LM = "lm_phase5_2"
 
 
