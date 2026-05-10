@@ -1439,6 +1439,32 @@ PHASE_5_9_MIX = TextMix(
 )
 
 
+# Phase 5.10 — callsign-mix bump on top of the proven Phase 5.5 baseline.
+# v0.6.2 live tests (ragchew2 vs cwget) showed morseformer cwget-parity on
+# prose but still fragile on harder real-radio callsigns (MW0BGL, G3ZRJ,
+# G4MLW under jitter + noise). The first reproducible callsign bench
+# (LCWO 001, 240 calls clean) puts Phase 5.5 at 1.13 % CER / 7.50 % WER —
+# ~18 callsigns out of 240 partially wrong even without noise.
+#
+# Single-knob change from PHASE_3_4_MIX (Phase 5.5's mix):
+#   callsign 0.10 → 0.18  (+8 pp)
+#   random   0.18 → 0.10  (-8 pp)
+# All other proportions strictly preserved (qcode 0.12, qso 0.20,
+# numeric 0.12, words 0.04, prose 0.08, prose_fr 0.16). The 8 pp
+# come from `random` and only from `random` — taking from prose
+# would repeat the Phase 5.9 failure mode (see project_phase5_9_failure).
+PHASE_5_10_MIX = TextMix(
+    callsign=0.18,
+    qcode=0.12,
+    qso=0.20,
+    numeric=0.12,
+    words=0.04,
+    random=0.10,
+    prose=0.08,
+    prose_fr=0.16,
+)
+
+
 _CATEGORIES = (
     "callsign", "qcode", "qso", "numeric", "words",
     "random", "prose", "prose_fr", "adversarial_fr",

@@ -70,7 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
                             "phase3_4", "phase3_5", "phase3_6",
                             "phase4_0_a", "phase4_0_b", "phase4_0_c",
                             "phase5_3", "phase5_5", "phase5_6", "phase5_7",
-                            "phase5_8", "phase5_9"),
+                            "phase5_8", "phase5_9", "phase5_10"),
                    default="phase2_1",
                    help="Dataset preset. phase2_1 = Phase 3.0 clean "
                         "ablation. phase3_1 = realistic HF channel. "
@@ -175,7 +175,9 @@ def main(argv: list[str] | None = None) -> int:
         d_joint=args.d_joint,
     )
 
-    if args.curriculum == "phase5_9":
+    if args.curriculum == "phase5_10":
+        dataset_cfg = DatasetConfig.phase_5_10(seed=args.seed)
+    elif args.curriculum == "phase5_9":
         dataset_cfg = DatasetConfig.phase_5_9(seed=args.seed)
     elif args.curriculum == "phase5_8":
         dataset_cfg = DatasetConfig.phase_5_8(seed=args.seed)

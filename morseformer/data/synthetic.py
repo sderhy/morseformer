@@ -45,6 +45,7 @@ from morseformer.data.text import (
     PHASE_5_7_MIX,
     PHASE_5_8_MIX,
     PHASE_5_9_MIX,
+    PHASE_5_10_MIX,
     TextMix,
     sample_random_chars_phase4,
     sample_text,
@@ -718,6 +719,60 @@ class DatasetConfig:
             qrm_offset_range_hz=(-300.0, 300.0),
             qrm_rel_db_range=(-18.0, -8.0),
             text_mix=PHASE_5_9_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
+
+    @classmethod
+    def phase_5_10(cls, **overrides) -> "DatasetConfig":
+        """Phase 5.10 callsign-mix bump.
+
+        Same channel + jitter + operator envelope as Phase 5.5 — the
+        proven baseline that bench LCWO v1 ranked above every Phase
+        5.7/5.8/5.9 attempt. Only knob changed: ``text_mix =
+        PHASE_5_10_MIX`` (see :data:`morseformer.data.text.PHASE_5_10_MIX`).
+        Callsign weight goes 0.10 → 0.18 (+8 pp), funded strictly from
+        ``random`` 0.18 → 0.10. All other proportions (qcode, qso,
+        numeric, words, prose, prose_fr) are preserved byte-for-byte
+        vs PHASE_3_4_MIX to avoid the Phase 5.9 failure mode (amputing
+        prose weight → bench-wide regression — see
+        ``project_phase5_9_failure``).
+
+        Targets the v0.6.2 live gap: hard callsigns under noise +
+        jitter (MW0BGL, G3ZRJ, G4MLW on ragchew2). Single-lever
+        change to keep ablation crisp — no letter_groups, no
+        contest_dense, no run-on pair augmentation, no SNR ladder
+        change.
+
+        Bootstrap target: ``checkpoints/phase5_5/last.pt``. Do NOT
+        bootstrap from 5_7 / 5_8 / 5_9 last — those are dead acoustic
+        branches per ``project_bench_lcwo_v1`` and
+        ``project_phase5_9_failure``.
+
+        Bench-gating criteria (NEXT.md, must hold for v0.6.3 ship):
+        * bench LCWO v1 mean CER ≤ 3.0 % (5_5 = 2.85 %, tolerance noise)
+        * callsign_lcwo_001 CER ≤ baseline 1.13 % − 0.3 pp (measurable gain)
+        * websdr-fav22 CER ≤ 8.5 % (tolerance vs 5_5 8.00 %)
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            operator_word_gap_inflation_range=(1.0, 8.0),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_5_10_MIX,
         )
         base.update(overrides)
         return cls(**base)
