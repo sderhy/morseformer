@@ -160,6 +160,7 @@ def _resample_if_needed(
     if src_rate == dst_rate:
         return audio
     from math import gcd
+
     from scipy.signal import resample_poly
     g = gcd(src_rate, dst_rate)
     return resample_poly(audio, dst_rate // g, src_rate // g).astype(
@@ -245,7 +246,11 @@ def main(argv: list[str] | None = None) -> int:
     model = _load_rnnt(ckpt_path, device)
     n_params = sum(p.numel() for p in model.parameters())
 
-    digit_thr = args.digit_threshold if args.digit_threshold and args.digit_threshold > 0.0 else None
+    digit_thr = (
+        args.digit_threshold
+        if args.digit_threshold and args.digit_threshold > 0.0
+        else None
+    )
     sd_cfg = StreamingConfig(
         window_seconds=args.window_seconds,
         hop_seconds=args.hop_seconds,

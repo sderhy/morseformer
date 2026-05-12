@@ -37,12 +37,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn
 
 from morseformer.core.tokenizer import BLANK_INDEX, VOCAB_SIZE
 from morseformer.models.conformer import RotaryEmbedding, apply_rope
-
 
 # Re-export the overloaded semantic — blank index doubles as EOS for the LM.
 EOS_INDEX = BLANK_INDEX

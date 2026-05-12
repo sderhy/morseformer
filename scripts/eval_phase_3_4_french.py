@@ -32,9 +32,8 @@ import numpy as np
 import torch
 
 from eval.metrics import character_error_rate, word_error_rate
-from morseformer.core.tokenizer import decode
+from morseformer.core.tokenizer import decode, encode
 from morseformer.data.synthetic import (
-    DatasetConfig,
     _FALLBACK_SHORT_TEXTS,
     collate,
     estimate_cw_duration_s,
@@ -44,7 +43,6 @@ from morseformer.data.validation import ValidationSample, _render_one
 from morseformer.features import extract_features
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
-from morseformer.core.tokenizer import encode
 
 NEW_TOKENS: tuple[str, ...] = ("É", "À", "'")
 
@@ -317,7 +315,7 @@ def _print_report(label: str, scored: dict, snrs: tuple[float, ...]) -> None:
               f"{ts['presence_precision']*100:>8.1f}%")
     if scored["examples"]:
         print()
-        print(f"  qualitative samples (with ≥1 new token in ref):")
+        print("  qualitative samples (with ≥1 new token in ref):")
         for ref, hyp, snr_lbl, cer in scored["examples"]:
             print(f"    [{snr_lbl}, CER={cer*100:5.1f}%]")
             print(f"      REF: {ref!r}")

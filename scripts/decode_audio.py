@@ -32,7 +32,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from morseformer.core.tokenizer import BLANK_INDEX, ctc_greedy_decode, decode
+from morseformer.core.tokenizer import ctc_greedy_decode, decode
 from morseformer.decoding.postprocess import format_output
 from morseformer.decoding.streaming import StreamingConfig, decode_offline
 from morseformer.features import FrontendConfig, extract_features
@@ -57,8 +57,9 @@ def _load_audio(path: Path, target_sr: int) -> np.ndarray:
         audio = audio / max_abs
 
     if sr != target_sr:
-        from scipy.signal import resample_poly
         from math import gcd
+
+        from scipy.signal import resample_poly
         g = gcd(sr, target_sr)
         up = target_sr // g
         down = sr // g

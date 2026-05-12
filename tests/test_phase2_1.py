@@ -21,7 +21,6 @@ from morseformer.data.validation import (  # noqa: E402
     build_snr_ladder_validation,
 )
 
-
 # --------------------------------------------------------------------- #
 # DatasetConfig presets
 # --------------------------------------------------------------------- #

@@ -37,7 +37,7 @@ Usage::
 
     python -m scripts.align_ebook_cw \
         --decoded /tmp/alice_ch1_decoded.jsonl \
-        --gt-text "/home/serge/Bureau/wav/Alice-adventures-in-wonderland/Alice-adventures-in-wonderland/Text/chapter1.txt" \
+        --gt-text "/path/to/Alice-adventures-in-wonderland/Text/chapter1.txt" \
         --audio-path data/real/alice_chapter1.wav \
         --output data/real/alice_chapter1_aligned.jsonl
 """
@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     gt_text = _normalize_prose(raw, args.language)
     print(f"[align_ebook] gt text:     {len(gt_text):,} chars (normalised, lang={args.language})")
 
-    print(f"[align_ebook] building char-level alignment …")
+    print("[align_ebook] building char-level alignment …")
     mapping = _build_char_mapping(decoded_text, gt_text)
 
     # Score the alignment globally

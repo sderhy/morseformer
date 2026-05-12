@@ -43,7 +43,6 @@ import numpy as np
 
 from morseformer.data.itu_prefixes import root_has_fixed_digit, sample_root
 
-
 # --------------------------------------------------------------------- #
 # Callsigns
 # --------------------------------------------------------------------- #
@@ -611,7 +610,10 @@ def sample_random_chars(rng: np.random.Generator) -> str:
             if place == 0:
                 chunk = "".join(base_chars) + punct
             elif place == 1:
-                chunk = punct + "".join(base_chars) if not punct.startswith(" ") else "".join(base_chars) + punct
+                if not punct.startswith(" "):
+                    chunk = punct + "".join(base_chars)
+                else:
+                    chunk = "".join(base_chars) + punct
             else:
                 pos = int(rng.integers(1, max(2, len(base_chars))))
                 chunk = "".join(base_chars[:pos]) + punct + "".join(base_chars[pos:])

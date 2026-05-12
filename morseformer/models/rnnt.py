@@ -28,9 +28,8 @@ hybrid-CTC/RNN-T recipe.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 import math
+from dataclasses import dataclass, field
 
 import torch
 from torch import nn
@@ -44,7 +43,6 @@ from morseformer.core.tokenizer import (
 )
 from morseformer.models.acoustic import AcousticConfig, AcousticModel
 from morseformer.models.conformer import init_parameters
-
 
 # --------------------------------------------------------------------- #
 # Config
@@ -500,7 +498,6 @@ class RnntModel(nn.Module):
                         continue
 
                     # Batch pred.step for all surviving extensions.
-                    n_pend = len(pending_extensions)
                     new_tok_batch = torch.tensor(
                         [[e[1]] for e in pending_extensions],
                         dtype=torch.long, device=device,
@@ -673,7 +670,6 @@ class RnntModel(nn.Module):
                         frontier = []
                         continue
 
-                    n_pend = len(pending_extensions)
                     new_tok_batch = torch.tensor(
                         [[e[1]] for e in pending_extensions],
                         dtype=torch.long, device=device,

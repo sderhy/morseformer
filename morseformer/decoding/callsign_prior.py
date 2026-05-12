@@ -44,7 +44,6 @@ import re
 
 from morseformer.data.itu_prefixes import ENTRIES
 
-
 # Set of known DXCC roots taken from the synthesis table. The synthesis
 # table is the smallest possible subset that the training-time mix
 # actually exposes the model to — biasing the prior to those same roots

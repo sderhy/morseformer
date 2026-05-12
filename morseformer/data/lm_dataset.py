@@ -14,8 +14,8 @@ and the config seed, so a fresh-seeded run is fully reproducible.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from typing import Iterator
 
 import numpy as np
 import torch
@@ -61,8 +61,7 @@ class LmStreamDataset(IterableDataset):
         """Yield an endless stream of token ids, EOS-separated."""
         while True:
             text = sample_text(rng, self.cfg.mix)
-            for idx in encode(text):
-                yield idx
+            yield from encode(text)
             yield EOS_INDEX
 
     def __iter__(self) -> Iterator[dict[str, torch.Tensor]]:

@@ -23,7 +23,6 @@ Omit ``--candidate-ckpt`` to evaluate only the baseline.
 from __future__ import annotations
 
 import argparse
-import math
 from pathlib import Path
 
 import torch
@@ -221,7 +220,9 @@ def main(argv: list[str] | None = None) -> int:
             (cand_guard[s]["cer"] - base_guard[s]["cer"]) for s in snrs if s in cand_guard
         ) / len(snrs)
         real_gain = sum(
-            (base_realistic[s]["cer"] - cand_realistic[s]["cer"]) for s in snrs if s in cand_realistic
+            (base_realistic[s]["cer"] - cand_realistic[s]["cer"])
+            for s in snrs
+            if s in cand_realistic
         ) / len(snrs)
         print()
         print(f"[eval_rnnt] guard regression (cand - base, mean Δ): "

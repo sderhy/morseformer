@@ -62,7 +62,7 @@ class NeuralDecoder:
     @classmethod
     def from_checkpoint(
         cls, path: str | Path, cfg: NeuralDecoderConfig | None = None
-    ) -> "NeuralDecoder":
+    ) -> NeuralDecoder:
         cfg = cfg or NeuralDecoderConfig()
         ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
 

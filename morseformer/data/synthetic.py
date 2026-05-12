@@ -27,8 +27,6 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
-import math
-
 from morse_synth.channel import ChannelConfig
 from morse_synth.core import render
 from morse_synth.keying import KeyingConfig
@@ -288,14 +286,14 @@ class DatasetConfig:
         return int(round(self.target_duration_s * self.sample_rate))
 
     @classmethod
-    def phase_2_0(cls, **overrides) -> "DatasetConfig":
+    def phase_2_0(cls, **overrides) -> DatasetConfig:
         """Explicit Phase 2.0 preset (clean + ideal timing). Equivalent
         to the bare default constructor — provided for symmetry with
         :meth:`phase_2_1` and for readability at call sites."""
         return cls(**overrides)
 
     @classmethod
-    def phase_2_1(cls, **overrides) -> "DatasetConfig":
+    def phase_2_1(cls, **overrides) -> DatasetConfig:
         """Moderate-noise curriculum: channel on every sample, SNR
         uniform in [0, 30] dB, mild operator jitter, RX bandpass at
         500 Hz. These are the defaults used for the Phase 2.1 training
@@ -313,7 +311,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_2_2(cls, **overrides) -> "DatasetConfig":
+    def phase_2_2(cls, **overrides) -> DatasetConfig:
         """Phase 2.1 curriculum with widened operator-jitter ranges.
 
         The Phase 2.1 model exposed a jitter-OOD gap at low SNR: the
@@ -335,7 +333,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_3_2(cls, **overrides) -> "DatasetConfig":
+    def phase_3_2(cls, **overrides) -> DatasetConfig:
         """Phase 3.2 anti-hallucination curriculum.
 
         Builds on the Phase 3.1 realistic-HF channel and adds two
@@ -376,7 +374,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_3_6(cls, **overrides) -> "DatasetConfig":
+    def phase_3_6(cls, **overrides) -> DatasetConfig:
         """Phase 3.6 adversarial-FR + post-emission-silence curriculum.
 
         Builds on Phase 3.5 (wider operator-jitter, full Phase 3.4
@@ -420,7 +418,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def _phase_4_0_base(cls, **overrides) -> "DatasetConfig":
+    def _phase_4_0_base(cls, **overrides) -> DatasetConfig:
         """Common knobs for the Phase 4.0 sub-curricula.
 
         Phase 4.0 retrains the acoustic model from the Phase 3.5
@@ -483,7 +481,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_4_0_a(cls, **overrides) -> "DatasetConfig":
+    def phase_4_0_a(cls, **overrides) -> DatasetConfig:
         """Phase 4.0a — clean curriculum, no jitter, no channel.
 
         Bootstrap target: ``checkpoints/phase3_5/best_rnnt.pt``. The
@@ -494,7 +492,7 @@ class DatasetConfig:
         return cls._phase_4_0_base(**overrides)
 
     @classmethod
-    def phase_4_0_b(cls, **overrides) -> "DatasetConfig":
+    def phase_4_0_b(cls, **overrides) -> DatasetConfig:
         """Phase 4.0b — 4.0a + Phase-3.5-style operator jitter.
 
         Same channel-off setting as 4.0a; only operator timing jitter
@@ -508,7 +506,7 @@ class DatasetConfig:
         return cls._phase_4_0_base(**base)
 
     @classmethod
-    def phase_4_0_c(cls, **overrides) -> "DatasetConfig":
+    def phase_4_0_c(cls, **overrides) -> DatasetConfig:
         """Phase 4.0c — full HF channel (AWGN + QSB + QRN + drift + QRM).
 
         Identical channel envelope to Phase 3.5/3.6; the difference is
@@ -536,7 +534,7 @@ class DatasetConfig:
         return cls._phase_4_0_base(**base)
 
     @classmethod
-    def phase_5_6(cls, **overrides) -> "DatasetConfig":
+    def phase_5_6(cls, **overrides) -> DatasetConfig:
         """Phase 5.6 digit-hallucination suppression curriculum.
 
         Phase 5.5 + two changes:
@@ -579,7 +577,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_5_5(cls, **overrides) -> "DatasetConfig":
+    def phase_5_5(cls, **overrides) -> DatasetConfig:
         """Phase 5.5 long-inter-word-silence curriculum.
 
         Phase 5.3 channel + jitter + dash-ratio + element-gap inflation,
@@ -623,7 +621,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_5_8(cls, **overrides) -> "DatasetConfig":
+    def phase_5_8(cls, **overrides) -> DatasetConfig:
         """Phase 5.8 English-literary curriculum.
 
         Targets the v0.5.4 LCWO live test gap on long-form English
@@ -678,7 +676,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_5_9(cls, **overrides) -> "DatasetConfig":
+    def phase_5_9(cls, **overrides) -> DatasetConfig:
         """Phase 5.9 random-letter-group densification.
 
         Same channel + jitter envelope as Phase 5.5, with the
@@ -724,7 +722,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_5_10(cls, **overrides) -> "DatasetConfig":
+    def phase_5_10(cls, **overrides) -> DatasetConfig:
         """Phase 5.10 callsign-mix bump.
 
         Same channel + jitter + operator envelope as Phase 5.5 — the
@@ -778,7 +776,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_5_7(cls, **overrides) -> "DatasetConfig":
+    def phase_5_7(cls, **overrides) -> DatasetConfig:
         """Phase 5.7 amateur-radio idiom curriculum.
 
         Phase 5.5 channel + jitter envelope, plus two text/operator
@@ -835,7 +833,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_5_3(cls, **overrides) -> "DatasetConfig":
+    def phase_5_3(cls, **overrides) -> DatasetConfig:
         """Phase 5.3 hand-keyed-robustness curriculum.
 
         Phase 3.5 channel + Phase 3.4 text mix, with two additional
@@ -882,7 +880,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_3_5(cls, **overrides) -> "DatasetConfig":
+    def phase_3_5(cls, **overrides) -> DatasetConfig:
         """Phase 3.5 wider-jitter curriculum.
 
         Identical to Phase 3.4 except for the operator-jitter ranges,
@@ -923,7 +921,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_3_4(cls, **overrides) -> "DatasetConfig":
+    def phase_3_4(cls, **overrides) -> DatasetConfig:
         """Phase 3.4 French-CW curriculum.
 
         Identical channel and label distributions to Phases 3.2 / 3.3 —
@@ -960,7 +958,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_3_3(cls, **overrides) -> "DatasetConfig":
+    def phase_3_3(cls, **overrides) -> DatasetConfig:
         """Phase 3.3 multilingual prose curriculum.
 
         Identical channel and label distributions to Phase 3.2 — the
@@ -999,7 +997,7 @@ class DatasetConfig:
         return cls(**base)
 
     @classmethod
-    def phase_3_1(cls, **overrides) -> "DatasetConfig":
+    def phase_3_1(cls, **overrides) -> DatasetConfig:
         """Phase 3.1 realistic-HF curriculum.
 
         Turns on every channel impairment at realistic magnitudes:
@@ -1314,8 +1312,8 @@ class SyntheticCWDataset(IterableDataset):
             # empty. Forces the acoustic head to commit to "no decode"
             # on rhythmic on-band noise rather than fall back on a
             # digit class (the v0.5.1 live failure mode).
-            from morse_synth.keying import render_events
             from morse_synth.channel import apply_channel
+            from morse_synth.keying import render_events
             wpm = float(rng.uniform(*cfg.wpm_range))
             unit_s = 1.2 / wpm
             n_pulses = int(rng.integers(4, 26))

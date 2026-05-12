@@ -146,11 +146,11 @@ def test_feed_decodes_one_chunk_per_hop_after_first_window() -> None:
     rng = np.random.default_rng(0)
     # Push exactly window_seconds: should decode chunk 0.
     audio = rng.standard_normal(sd._window_samples).astype(np.float32)
-    out = sd.feed(audio)
+    sd.feed(audio)
     assert sd._chunk_idx == 1
     # Push another hop_seconds: should decode chunk 1.
     audio = rng.standard_normal(sd._hop_samples).astype(np.float32)
-    out = sd.feed(audio)
+    sd.feed(audio)
     assert sd._chunk_idx == 2
 
 

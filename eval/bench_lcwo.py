@@ -32,7 +32,7 @@ import torch
 
 from eval.benchmark import run as run_benchmark
 from eval.datasets import Sample
-from morseformer.cli.presets import PRESETS, get_preset
+from morseformer.cli.presets import get_preset
 from morseformer.cli.registry import resolve_model
 from morseformer.data.text import _normalize_prose
 from morseformer.decoding.postprocess import format_output
@@ -40,7 +40,6 @@ from morseformer.decoding.streaming import StreamingConfig, decode_offline
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.lm import GptLM, LmConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
-
 
 # --------------------------------------------------------------------------- #
 # Manifest
@@ -58,7 +57,7 @@ class BenchEntry:
     kind: str
 
     @classmethod
-    def from_json(cls, obj: dict, repo_root: Path) -> "BenchEntry":
+    def from_json(cls, obj: dict, repo_root: Path) -> BenchEntry:
         return cls(
             id=obj["id"],
             audio=repo_root / obj["audio"],

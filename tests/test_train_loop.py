@@ -9,9 +9,9 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from morseformer.models.acoustic import AcousticConfig  # noqa: E402
 from morseformer.data.synthetic import DatasetConfig  # noqa: E402
 from morseformer.data.validation import ValidationConfig  # noqa: E402
+from morseformer.models.acoustic import AcousticConfig  # noqa: E402
 from morseformer.train.acoustic import TrainConfig, train  # noqa: E402
 
 

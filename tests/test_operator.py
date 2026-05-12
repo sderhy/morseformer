@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 
 from morse_synth.operator import OperatorConfig, build_events
@@ -45,7 +44,10 @@ def test_different_seeds_give_different_timings() -> None:
 def test_jitter_preserves_event_count() -> None:
     # Timing noise must never drop or insert events — only move them in time.
     ref = build_events("HELLO WORLD", OperatorConfig(wpm=20))
-    jittered = build_events("HELLO WORLD", OperatorConfig(wpm=20, element_jitter=0.3, gap_jitter=0.3, seed=42))
+    jittered = build_events(
+        "HELLO WORLD",
+        OperatorConfig(wpm=20, element_jitter=0.3, gap_jitter=0.3, seed=42),
+    )
     assert len(ref) == len(jittered)
     # Same ON/OFF pattern.
     assert [e[0] for e in ref] == [e[0] for e in jittered]

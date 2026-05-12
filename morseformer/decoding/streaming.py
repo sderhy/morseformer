@@ -42,7 +42,6 @@ from morseformer.models.fusion import (
 from morseformer.models.lm import GptLM
 from morseformer.models.rnnt import RnntModel
 
-
 # Conformer subsampling factor (two stride-2 conv layers).
 _ENC_SUBSAMPLE: int = 4
 

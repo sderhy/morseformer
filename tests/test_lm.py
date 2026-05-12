@@ -4,8 +4,6 @@ reduce the loss on a trivial target."""
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
@@ -89,8 +87,8 @@ def test_dataset_train_val_streams_differ() -> None:
     rng_t = np.random.default_rng(0)
     rng_v = np.random.default_rng(0 + 1_000_003)
     # First few tokens from each must differ in at least some positions.
-    from morseformer.data.text import sample_text
     from morseformer.core.tokenizer import encode
+    from morseformer.data.text import sample_text
     t_tokens: list[int] = []
     v_tokens: list[int] = []
     while len(t_tokens) < 100:

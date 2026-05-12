@@ -108,12 +108,13 @@ def test_cli_smoke_end_to_end(tmp_path: Path) -> None:
     Uses --json so we can parse the output structurally.
     """
     import json
+
     from eval.cli import main as cli_main
 
     ckpt = _train_tiny_checkpoint(tmp_path)
     # Redirect stdout to a file to capture JSON.
-    import io
     import contextlib
+    import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         rc = cli_main([

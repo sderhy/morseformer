@@ -12,9 +12,8 @@ keep in RAM and re-use across many validation passes per epoch.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 import math
+from dataclasses import dataclass, field
 
 import numpy as np
 import torch
@@ -71,7 +70,7 @@ class ValidationConfig:
         return self.n_per_wpm * len(self.wpm_bins)
 
     @classmethod
-    def matching(cls, ds_cfg: DatasetConfig, **overrides) -> "ValidationConfig":
+    def matching(cls, ds_cfg: DatasetConfig, **overrides) -> ValidationConfig:
         """Build a ``ValidationConfig`` whose audio pipeline matches
         ``ds_cfg`` exactly. Use this so the val set sees the same
         synth / front-end settings as the training stream."""

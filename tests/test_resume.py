@@ -171,8 +171,8 @@ def test_resume_preserves_best_cer(tmp_path: Path) -> None:
 def test_resume_dataset_seed_is_bumped(tmp_path: Path) -> None:
     """After resume we must not replay the same samples we already
     trained on. The dataset seed gets bumped by step * 7919."""
+
     from morseformer.data.synthetic import SyntheticCWDataset
-    from dataclasses import replace
 
     phase1 = tmp_path / "p1"
     base_seed = 123

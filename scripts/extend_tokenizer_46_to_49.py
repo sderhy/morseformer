@@ -36,7 +36,6 @@ from morseformer.core.tokenizer import LEGACY_VOCAB_SIZE, VOCAB_SIZE
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
-
 # Tensors whose first dim is the vocabulary size. Order matters — we
 # slice every key by ``[:LEGACY_VOCAB_SIZE]`` along dim 0.
 VOCAB_DIM_KEYS: tuple[str, ...] = (

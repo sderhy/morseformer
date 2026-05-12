@@ -27,7 +27,6 @@ from pathlib import Path
 
 import torch
 
-
 # Keys we strip out of the checkpoint before release. ``step`` and
 # ``metrics`` are kept for provenance; they are tiny.
 _STRIP_KEYS = ("optimizer", "scheduler")

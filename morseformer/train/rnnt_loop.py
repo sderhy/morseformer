@@ -38,11 +38,9 @@ from morseformer.data.validation import (
     build_clean_validation,
     build_snr_ladder_validation,
 )
-from morseformer.models.acoustic import AcousticModel
 from morseformer.models.rnnt import RnntConfig, RnntModel
 from morseformer.train.ema import ExponentialMovingAverage
 from morseformer.train.scheduler import WarmupCosineSchedule
-
 
 # --------------------------------------------------------------------- #
 # Config

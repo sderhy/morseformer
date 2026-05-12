@@ -37,7 +37,7 @@ import torch
 from scipy.io import wavfile
 from torch.utils.data import IterableDataset
 
-from morseformer.core.tokenizer import BLANK_INDEX, encode
+from morseformer.core.tokenizer import encode
 from morseformer.data.synthetic import _pad_or_truncate, _worker_seed
 from morseformer.features import FrontendConfig, extract_features
 

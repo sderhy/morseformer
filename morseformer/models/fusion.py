@@ -35,7 +35,6 @@ from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 
-from morseformer.core.tokenizer import BLANK_INDEX
 from morseformer.models.lm import EOS_INDEX, GptLM
 from morseformer.models.rnnt import RnntModel
 

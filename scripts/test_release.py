@@ -30,8 +30,6 @@ automatically if ``--ckpt`` is not given.
 from __future__ import annotations
 
 import argparse
-import math
-import sys
 from pathlib import Path
 
 import torch
@@ -46,7 +44,6 @@ from morseformer.data.validation import (
 )
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
-
 
 # CER thresholds the checkpoint must stay within on each SNR bin.
 # Re-calibrated for v0.4.0 (Phase 3.5 best.pt) on the AWGN guard
@@ -192,7 +189,6 @@ def main(argv: list[str] | None = None) -> int:
     all_pass = True
     for snr in _SNRS:
         cers = per_snr.get(snr, [])
-        key = snr if math.isfinite(snr) else math.inf
         mean = sum(cers) / len(cers) if cers else float("nan")
         threshold = _THRESHOLDS[snr]
         ok = mean <= threshold

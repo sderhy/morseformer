@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
 
     target_samples = int(round(args.target_duration_s * args.sample_rate))
     frontend = FrontendConfig()
-    print(f"[eval_fusion_realaudio] extracting features …")
+    print("[eval_fusion_realaudio] extracting features …")
     features, lengths = _build_features(
         chunks, target_samples, args.sample_rate, frontend
     )

@@ -28,7 +28,6 @@ from morseformer.data.text import (
     sample_text,
 )
 
-
 # --------------------------------------------------------------------- #
 # Determinism
 # --------------------------------------------------------------------- #
@@ -569,6 +568,7 @@ def test_french_adversarial_hits_target_patterns() -> None:
     density (~6 %). Skips silently if the FR corpus is missing.
     """
     import re as _re
+
     from morseformer.data.text import (
         _adversarial_corpus_text,
         sample_french_adversarial,

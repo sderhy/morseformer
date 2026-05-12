@@ -61,6 +61,12 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B"]
+# PyTorch ecosystem conventions:
+#   N812 — `import torch.nn.functional as F` is the canonical alias.
+#   N806 — single-letter tensor-shape variables (B, T, K, D) are idiomatic.
+#   N802 — test names often encode tensor dim names (e.g. preserves_T_and_D).
+#   B905 — `zip(strict=)` is opt-in safety, not a defect.
+ignore = ["N812", "N806", "N802", "B905"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

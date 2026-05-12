@@ -41,10 +41,8 @@ import torch
 
 from morseformer.core.tokenizer import ctc_greedy_decode, decode
 from morseformer.features import FrontendConfig, extract_features
-from morseformer.models.acoustic import AcousticConfig
-from morseformer.models.rnnt import RnntConfig, RnntModel
+from morseformer.models.rnnt import RnntModel
 from scripts.decode_audio import (
-    _acoustic_cfg_from_state,
     _auto_device,
     _is_rnnt_checkpoint,
     _load_audio,

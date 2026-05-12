@@ -211,7 +211,6 @@ def test_load_encoder_state_dict_roundtrip() -> None:
     """A Phase-2 acoustic checkpoint drops directly into the RNN-T
     model's encoder + CTC head."""
     cfg = _tiny_cfg()
-    phase2 = torch.nn.Module()  # placeholder, we need AcousticModel
     from morseformer.models.acoustic import AcousticModel
     src = AcousticModel(cfg.encoder)
     # Randomise to make the test meaningful.

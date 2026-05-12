@@ -15,8 +15,8 @@ from morseformer import __version__
 from morseformer.cli import build_parser, main
 from morseformer.cli.presets import DEFAULT_PRESET, PRESETS, get_preset
 from morseformer.cli.registry import (
-    REGISTRY,
     RECOMMENDED_ACOUSTIC,
+    REGISTRY,
     known_names,
     resolve_model,
 )

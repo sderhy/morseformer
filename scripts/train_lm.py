@@ -30,7 +30,6 @@ from morseformer.data.text import (
 from morseformer.models.lm import LmConfig
 from morseformer.train.lm_loop import LmTrainConfig, train
 
-
 _MIXES = {
     "default": DEFAULT_MIX,
     "phase_3_2": PHASE_3_2_MIX,

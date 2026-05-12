@@ -128,7 +128,8 @@ def _build_decoder(args: argparse.Namespace) -> Decoder:
         # Deferred import so that users on machines without torch can
         # still run `--decoder rule_based`.
         from morseformer.baselines.neural import (
-            NeuralDecoder, NeuralDecoderConfig,
+            NeuralDecoder,
+            NeuralDecoderConfig,
         )
         return NeuralDecoder.from_checkpoint(
             args.checkpoint,
@@ -164,7 +165,7 @@ def main(argv: list[str] | None = None) -> int:
         ds = generate_noisy(n=args.n, snr_db=args.snr_db, seed=args.seed)
         result = run(decoder, ds)
         label = (
-            f"noisy (SNR=+inf)" if math.isinf(args.snr_db)
+            "noisy (SNR=+inf)" if math.isinf(args.snr_db)
             else f"noisy (SNR={args.snr_db:+.1f} dB)"
         )
         if args.json:

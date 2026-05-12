@@ -18,7 +18,6 @@ from morseformer.data.synthetic import (  # noqa: E402
 )
 from morseformer.features import FrontendConfig  # noqa: E402
 
-
 # --------------------------------------------------------------------- #
 # DatasetConfig
 # --------------------------------------------------------------------- #

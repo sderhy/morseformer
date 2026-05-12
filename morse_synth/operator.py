@@ -15,7 +15,7 @@ real traffic.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
@@ -137,7 +137,7 @@ def build_events(text: str, cfg: OperatorConfig | None = None) -> list[Event]:
             gap_units = jitter_units(cfg.farnsworth_word_gap, cfg.gap_jitter) * word_inflation
             events.append((False, gap_units * u))
         prev_emitted: str | None = None  # last letter that produced events
-        for char_i, ch in enumerate(word):
+        for ch in word:
             code = MORSE_TABLE.get(ch)
             if code is None:
                 continue

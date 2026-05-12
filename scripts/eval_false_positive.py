@@ -49,7 +49,6 @@ from morseformer.models.fusion import FusionConfig, greedy_rnnt_decode_with_lm
 from morseformer.models.lm import GptLM, LmConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
-
 _MODE_NAMES = ("pure-AWGN", "AWGN+QRN", "distant-weak-CW")
 
 
@@ -159,7 +158,9 @@ def _load_lm(path: Path, device: torch.device) -> GptLM:
 
 def _summary(name: str, per_mode: list[list[int]]) -> str:
     lines = [f"=== {name} ==="]
-    lines.append(f"  {'mode':<20} | {'n':>3} | {'mean':>6} | {'median':>6} | {'max':>4} | {'pct>5':>6}")
+    lines.append(
+        f"  {'mode':<20} | {'n':>3} | {'mean':>6} | {'median':>6} | {'max':>4} | {'pct>5':>6}"
+    )
     lines.append("  " + "-" * 60)
     overall: list[int] = []
     for mode_idx, lengths in enumerate(per_mode):

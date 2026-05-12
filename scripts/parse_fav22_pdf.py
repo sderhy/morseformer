@@ -55,7 +55,6 @@ from pypdf import PdfReader
 
 from morseformer.data.text import _normalize_prose
 
-
 # Match any of the two header formats observed in the PDF:
 #   Lundi-Leçon numéro 01-1/4 Vitesse 420 codé
 #   Dimanche 7/Leçon numéro 2/1 Vitesse 600 clair

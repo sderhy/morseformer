@@ -20,18 +20,17 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from morseformer.core.tokenizer import decode
-from morseformer.features import FrontendConfig, extract_features
 from morse_synth.core import render
 from morse_synth.keying import KeyingConfig
 from morse_synth.operator import OperatorConfig
+from morseformer.core.tokenizer import decode
+from morseformer.features import FrontendConfig, extract_features
+from morseformer.models.rnnt import RnntModel
 from scripts.decode_audio import (
     _auto_device,
     _is_rnnt_checkpoint,
     _rnnt_cfg_from_state,
 )
-from morseformer.models.rnnt import RnntModel
-
 
 # Two short common words, each 3-5 chars: keeps the rendered audio
 # under 6 s even at inflation 6× (~2.5 s of inter-word silence).
@@ -125,7 +124,10 @@ def main(argv: list[str] | None = None) -> int:
                 if np.isfinite(args.snr_db):
                     sig_power = float(np.mean(clean ** 2)) + 1e-12
                     noise_power = sig_power / (10.0 ** (args.snr_db / 10.0))
-                    noise = rng.standard_normal(clean.size).astype(np.float32) * np.sqrt(noise_power)
+                    noise = (
+                        rng.standard_normal(clean.size).astype(np.float32)
+                        * np.sqrt(noise_power)
+                    )
                     audio = clean + noise
                 else:
                     audio = clean

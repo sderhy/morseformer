@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 
 from eval.metrics import character_error_rate
-from morseformer.baselines.rule_based import decode
 from morse_synth.core import synthesize
+from morseformer.baselines.rule_based import decode
 
 
 @pytest.mark.parametrize(

@@ -8,9 +8,9 @@ import pytest
 torch = pytest.importorskip("torch")
 
 from morseformer.data.synthetic import (  # noqa: E402
+    _FALLBACK_SHORT_TEXTS,
     DatasetConfig,
     SyntheticCWDataset,
-    _FALLBACK_SHORT_TEXTS,
     estimate_cw_duration_s,
 )
 

@@ -26,7 +26,6 @@ import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BENCH_DIR = REPO_ROOT / "data" / "bench"
 MANIFEST = BENCH_DIR / "manifest.jsonl"

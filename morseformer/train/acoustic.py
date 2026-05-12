@@ -37,7 +37,6 @@ from morseformer.models.acoustic import AcousticConfig, AcousticModel
 from morseformer.train.ema import ExponentialMovingAverage
 from morseformer.train.scheduler import WarmupCosineSchedule
 
-
 # --------------------------------------------------------------------- #
 # Config
 # --------------------------------------------------------------------- #
@@ -170,6 +169,7 @@ def evaluate(
     amp_dtype: torch.dtype | None = None,
 ) -> dict:
     import math
+
     from eval.metrics import character_error_rate, word_error_rate
 
     model.eval()

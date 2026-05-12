@@ -26,14 +26,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import torch
-from torch import nn
 from torch.utils.data import DataLoader
 
 from morseformer.data.lm_dataset import LmDatasetConfig, LmStreamDataset
 from morseformer.models.lm import GptLM, LmConfig
 from morseformer.train.ema import ExponentialMovingAverage
 from morseformer.train.scheduler import WarmupCosineSchedule
-
 
 # --------------------------------------------------------------------- #
 # Config
@@ -185,7 +183,7 @@ def train(cfg: LmTrainConfig) -> dict:
     # gains — standard GPT-2 / LLaMA recipe.
     decay_params: list[torch.nn.Parameter] = []
     nodecay_params: list[torch.nn.Parameter] = []
-    for n, p in model.named_parameters():
+    for _n, p in model.named_parameters():
         if not p.requires_grad:
             continue
         if p.dim() >= 2:
