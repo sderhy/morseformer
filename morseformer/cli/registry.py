@@ -36,6 +36,19 @@ class ModelInfo:
 
 
 REGISTRY: dict[str, ModelInfo] = {
+    "rnnt_phase5_10": ModelInfo(
+        name="rnnt_phase5_10",
+        filename="rnnt_phase5_10.pt",
+        kind="rnnt", vocab=49,
+        description="Phase 5.10 candidate — callsign-mix bump (0.10 → "
+                    "0.18, funded from random 0.18 → 0.10; every other "
+                    "PHASE_3_4_MIX proportion preserved). 6 k steps "
+                    "fine-tune from phase5_5/last at peak_lr 3e-5. "
+                    "Single-knob change targeting the v0.6.2 ragchew2 "
+                    "hard-callsign gap. Bench-gating required before any "
+                    "ship.",
+        recommended=False,
+    ),
     "rnnt_phase5_9": ModelInfo(
         name="rnnt_phase5_9",
         filename="rnnt_phase5_9.pt",

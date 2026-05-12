@@ -169,6 +169,9 @@ def make_morseformer_decoder(
     fusion_weight: float = 0.0,
     sample_rate: int = 8000,
     carrier_hz: float = 600.0,
+    beam_width: int = 1,
+    beam_emit_bonus: float = 0.0,
+    callsign_prior_weight: float = 0.0,
 ):
     def _decode(audio: np.ndarray, sr: int) -> str:
         if sr != sample_rate:
@@ -185,6 +188,9 @@ def make_morseformer_decoder(
             carrier_hz=carrier_hz,
             confidence_threshold=confidence_threshold,
             digit_threshold=digit_threshold,
+            beam_width=beam_width,
+            beam_emit_bonus=beam_emit_bonus,
+            callsign_prior_weight=callsign_prior_weight,
         )
         with torch.no_grad():
             hyp = decode_offline(
@@ -264,6 +270,22 @@ def main(argv: list[str] | None = None) -> int:
         "--show-hyp", action="store_true",
         help="also print first 200 chars of each hypothesis (debugging)",
     )
+    p.add_argument(
+        "--beam-width", type=int, default=1,
+        help="RNN-T decode beam width (Phase 7.0). 1 = greedy (default). "
+             ">1 disables LM fusion in the streaming path.",
+    )
+    p.add_argument(
+        "--beam-emit-bonus", type=float, default=0.0,
+        help="Length-bias correction for beam search (nats per non-"
+             "blank emission). Only applied when --beam-width > 1.",
+    )
+    p.add_argument(
+        "--callsign-prior-weight", type=float, default=0.0,
+        help="Phase 7.1 ITU-shape rescorer weight, multiplied into "
+             "score_callsign() on every word-boundary emission. "
+             "Only consulted when --beam-width > 1.",
+    )
     args = p.parse_args(argv)
 
     repo_root = Path.cwd()
@@ -305,11 +327,25 @@ def main(argv: list[str] | None = None) -> int:
                 lm = lm_cache[preset.lm]
                 fusion_weight = preset.fusion_weight
 
+            if args.beam_width > 1 and lm is not None:
+                # Cannot combine in current path — drop LM with a warning
+                # so a single --beam-width run still produces a clean
+                # acoustic-beam A/B vs the same preset's greedy numbers.
+                print(
+                    f"[bench_lcwo] beam_width={args.beam_width} > 1 — "
+                    f"skipping LM fusion for preset {preset_name}.",
+                    file=sys.stderr,
+                )
+                lm = None
+                fusion_weight = 0.0
             decoder = make_morseformer_decoder(
                 model, device=device,
                 confidence_threshold=preset.confidence_threshold,
                 digit_threshold=preset.digit_threshold,
                 lm=lm, fusion_weight=fusion_weight,
+                beam_width=args.beam_width,
+                beam_emit_bonus=args.beam_emit_bonus,
+                callsign_prior_weight=args.callsign_prior_weight,
             )
             result = run_benchmark(decoder, [s for _, s in pairs])
             for (e, _), r in zip(pairs, result.per_sample):

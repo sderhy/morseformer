@@ -36,7 +36,12 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from morseformer.core.tokenizer import BLANK_INDEX, VOCAB_SIZE
+from morseformer.core.tokenizer import (
+    BLANK_INDEX,
+    INDEX_TO_TOKEN,
+    SPACE_INDEX,
+    VOCAB_SIZE,
+)
 from morseformer.models.acoustic import AcousticConfig, AcousticModel
 from morseformer.models.conformer import init_parameters
 
@@ -536,6 +541,195 @@ class RnntModel(nn.Module):
                     # Pathological: all hypotheses dropped (e.g. by
                     # threshold). Stop early; we will return [] for
                     # this item below.
+                    break
+
+            if beam:
+                best = max(beam, key=lambda h: h[1])
+                results.append(list(best[0]))
+            else:
+                results.append([])
+        return results
+
+    @torch.no_grad()
+    def beam_rnnt_decode_aligned(
+        self,
+        features: torch.Tensor,
+        lengths: torch.Tensor | None = None,
+        beam_width: int = 5,
+        max_emit_per_frame: int = 5,
+        confidence_threshold: float = 0.0,
+        emit_bonus: float = 0.0,
+        callsign_prior_weight: float = 0.0,
+    ) -> list[list[tuple[int, int]]]:
+        """Aligned variant of :meth:`beam_rnnt_decode`.
+
+        Same frame-synchronous beam search and pruning as the bare beam
+        decoder, but each emission is tagged with the encoder frame at
+        which it was committed — the form the streaming decoder needs
+        for its central-zone-commit logic.
+
+        ``emit_bonus`` (in nats of log-prob) is added to the score of
+        every non-blank candidate, compensating the RNN-T "length
+        bias". Phase 7.0 smoke test found it doesn't move the needle
+        at positive values on this model — kept as a knob for future
+        use.
+
+        ``callsign_prior_weight`` (Phase 7.1) enables an ITU-shape
+        rescorer: every time a hypothesis emits a space (and therefore
+        finalises the word it had been building since the last space),
+        :func:`morseformer.decoding.callsign_prior.score_callsign` is
+        consulted on that word and the result is added to the
+        hypothesis score scaled by this weight. ``0.0`` (default)
+        recovers pure acoustic beam search. The prior is purely
+        additive and non-negative, so non-callsign words never lose
+        score; callsign-shaped words gain a controlled bias toward
+        being kept in the beam against their non-callsign rivals.
+
+        Returns ``list[list[tuple[int, int]]]`` — one list of
+        ``(token, frame_idx)`` pairs per batch item.
+        """
+        self.eval()
+        enc_out, enc_lengths = self.acoustic.encode(features, lengths)
+        b, t_max, _ = enc_out.shape
+        if enc_lengths is None:
+            enc_lengths = torch.full(
+                (b,), t_max, device=enc_out.device, dtype=torch.long
+            )
+        blank = self.cfg.blank_index
+        device = enc_out.device
+
+        log_thr = math.log(confidence_threshold) if confidence_threshold > 0 else None
+        top_k = max(beam_width, 2)
+        use_callsign_prior = callsign_prior_weight != 0.0
+        if use_callsign_prior:
+            from morseformer.decoding.callsign_prior import score_callsign
+
+        results: list[list[tuple[int, int]]] = []
+        for i in range(b):
+            t_valid = int(enc_lengths[i].item())
+
+            init_prev = torch.tensor(
+                [[blank]], dtype=torch.long, device=device
+            )
+            init_pred_out, init_state = self.pred.step(init_prev, None)
+            # Hypothesis tuple layout:
+            # (aligned: tuple[tuple[int, int], ...],
+            #  score: float,
+            #  prev_token: [1,1],
+            #  pred_state: (h, c) tuple of [layers, 1, d_pred] tensors,
+            #  pred_out: [1, 1, d_pred],
+            #  n_emit_this_frame: int,
+            #  word_buf: tuple[int, ...])      ← Phase 7.1 in-progress word
+            beam: list[tuple] = [
+                (tuple(), 0.0, init_prev, init_state, init_pred_out, 0, tuple())
+            ]
+
+            for t in range(t_valid):
+                f_single = enc_out[i : i + 1, t : t + 1, :]
+
+                frontier = [(al, sc, pt, st, po, 0, wb)
+                            for (al, sc, pt, st, po, _, wb) in beam]
+                next_beam: list[tuple] = []
+
+                while frontier:
+                    K = len(frontier)
+                    po_batch = torch.cat(
+                        [h[4] for h in frontier], dim=0
+                    )
+                    f_batch = f_single.expand(K, -1, -1)
+                    logits = self.joint(f_batch, po_batch)
+                    logp = F.log_softmax(logits[:, 0, 0, :], dim=-1)
+                    top_lp, top_idx = logp.topk(top_k, dim=-1)
+
+                    pending_extensions: list[tuple] = []
+                    for hyp_idx in range(K):
+                        al, sc, pt, st, po, n_emit, wb = frontier[hyp_idx]
+                        for k in range(top_k):
+                            tok = int(top_idx[hyp_idx, k].item())
+                            lp = float(top_lp[hyp_idx, k].item())
+                            if tok == blank:
+                                next_beam.append(
+                                    (al, sc + lp, pt, st, po, 0, wb)
+                                )
+                                continue
+                            if log_thr is not None and lp < log_thr:
+                                continue
+                            if n_emit >= max_emit_per_frame:
+                                next_beam.append(
+                                    (al, sc + lp, pt, st, po, 0, wb)
+                                )
+                                continue
+                            pending_extensions.append(
+                                (hyp_idx, tok, lp + emit_bonus, n_emit + 1)
+                            )
+
+                    if len(pending_extensions) > beam_width:
+                        pending_extensions.sort(
+                            key=lambda e: -(frontier[e[0]][1] + e[2])
+                        )
+                        pending_extensions = pending_extensions[:beam_width]
+
+                    if not pending_extensions:
+                        frontier = []
+                        continue
+
+                    n_pend = len(pending_extensions)
+                    new_tok_batch = torch.tensor(
+                        [[e[1]] for e in pending_extensions],
+                        dtype=torch.long, device=device,
+                    )
+                    src_h = torch.cat(
+                        [frontier[e[0]][3][0] for e in pending_extensions],
+                        dim=1,
+                    )
+                    src_c = torch.cat(
+                        [frontier[e[0]][3][1] for e in pending_extensions],
+                        dim=1,
+                    )
+                    new_po, (new_h, new_c) = self.pred.step(
+                        new_tok_batch, (src_h, src_c)
+                    )
+                    new_frontier: list[tuple] = []
+                    for j, (hyp_idx, tok, lp, n_emit_new) in enumerate(
+                        pending_extensions
+                    ):
+                        src = frontier[hyp_idx]
+                        # Phase 7.1: a space emission finalises the
+                        # in-progress word; rescore it with the ITU
+                        # callsign-shape prior and reset the buffer.
+                        # Anything else extends the buffer with the
+                        # emitted character.
+                        old_buf = src[6]
+                        prior_bonus = 0.0
+                        if tok == SPACE_INDEX:
+                            if use_callsign_prior and old_buf:
+                                word_str = "".join(
+                                    INDEX_TO_TOKEN[ix] for ix in old_buf
+                                )
+                                prior_bonus = (
+                                    callsign_prior_weight
+                                    * score_callsign(word_str, weight=1.0)
+                                )
+                            new_buf: tuple[int, ...] = tuple()
+                        else:
+                            new_buf = old_buf + (tok,)
+                        new_frontier.append((
+                            src[0] + ((tok, t),),
+                            src[1] + lp + prior_bonus,
+                            new_tok_batch[j : j + 1],
+                            (new_h[:, j : j + 1, :].contiguous(),
+                             new_c[:, j : j + 1, :].contiguous()),
+                            new_po[j : j + 1],
+                            n_emit_new,
+                            new_buf,
+                        ))
+                    frontier = new_frontier
+
+                if len(next_beam) > beam_width:
+                    next_beam.sort(key=lambda h: -h[1])
+                    next_beam = next_beam[:beam_width]
+                beam = next_beam
+                if not beam:
                     break
 
             if beam:

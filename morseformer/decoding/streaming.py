@@ -87,6 +87,24 @@ class StreamingConfig:
     # ``061511813``, ``5'9734``) leak through the regular threshold.
     # ``None`` disables the override.
     digit_threshold: float | None = None
+    # Phase 7.0: ``beam_width > 1`` switches the per-window decoder from
+    # greedy RNN-T to frame-synchronous beam search. The aligned variant
+    # is used so the central-zone-commit logic still receives
+    # ``[(tok, frame_idx), ...]``. Greedy (``beam_width=1``) remains the
+    # default. Beam is incompatible with LM fusion in the current code
+    # path — request one or the other, not both.
+    beam_width: int = 1
+    # Phase 7.0 beam-search length-bias correction (see
+    # :meth:`RnntModel.beam_rnnt_decode_aligned`). Added to every non-
+    # blank candidate's log-prob; tune via bench. Only consulted when
+    # ``beam_width > 1``.
+    beam_emit_bonus: float = 0.0
+    # Phase 7.1 ITU-shape rescorer weight. Multiplies the
+    # :func:`callsign_prior.score_callsign` output (∈ [0, 1]) on every
+    # word-boundary emission in beam search; the result is added to
+    # the hypothesis's running score. Only consulted when
+    # ``beam_width > 1``. ``0.0`` recovers pure acoustic beam.
+    callsign_prior_weight: float = 0.0
 
 
 class StreamingDecoder:
@@ -132,6 +150,12 @@ class StreamingDecoder:
         self.lm = lm
         self._fusion_cfg: FusionConfig | None = None
         if lm is not None and fusion_weight > 0.0:
+            if cfg.beam_width > 1:
+                raise ValueError(
+                    "LM fusion and beam_width > 1 cannot be combined in "
+                    "the current code path. Phase 7.0 wired beam-only; "
+                    "beam + LM-fusion is a Phase 7.1+ change."
+                )
             self._fusion_cfg = FusionConfig(
                 fusion_weight=fusion_weight,
                 ilm_weight=0.0,
@@ -259,6 +283,21 @@ class StreamingDecoder:
             if self._fusion_cfg is not None and self.lm is not None:
                 aligned = greedy_rnnt_decode_with_lm_aligned(
                     self.model, self.lm, x, lengths, self._fusion_cfg,
+                )[0]
+            elif self.cfg.beam_width > 1:
+                # Phase 7.0: beam search ignores ``digit_threshold``
+                # (acoustic-only gate). The threshold lives in the greedy
+                # path because it was an inference-only patch; beam will
+                # carry its own gating via per-candidate thresholds if
+                # we re-enable it.
+                aligned = self.model.beam_rnnt_decode_aligned(
+                    x,
+                    lengths,
+                    beam_width=self.cfg.beam_width,
+                    max_emit_per_frame=self.cfg.max_emit_per_frame,
+                    confidence_threshold=self.cfg.confidence_threshold,
+                    emit_bonus=self.cfg.beam_emit_bonus,
+                    callsign_prior_weight=self.cfg.callsign_prior_weight,
                 )[0]
             else:
                 aligned = self.model.greedy_rnnt_decode_aligned(
