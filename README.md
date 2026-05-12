@@ -82,6 +82,25 @@ CTC  : 'CQ DE F4HYY K'
 RNN-T: 'CQ DE F4HYY K'
 ```
 
+## Release v0.6.3
+
+Packaging-only refresh — no model change, same `rnnt_phase5_5.pt` and
+`lm_phase5_2.pt` on the HF Hub.
+
+- `morseformer/__init__.py`: `__version__` was stuck at `0.6.0` while
+  `pyproject.toml` had moved to `0.6.2`; both now read `0.6.3`.
+- `.github/workflows/ci.yml`: minimal CI (Python 3.10 / 3.11 / 3.12,
+  CPU PyTorch wheels, `ruff check` + `pytest`).
+- `[tool.ruff.lint]`: ignore `N812 / N806 / N802` (PyTorch idioms like
+  `import torch.nn.functional as F` and tensor-shape vars `B/T/K/D`) and
+  `B905` (`zip(strict=)` is opt-in safety, not a defect), plus a tree-wide
+  `ruff --fix` pass.
+
+PyPI was last updated at `0.6.1`, so `pip install -U morseformer` also picks
+up everything that landed in `0.6.2` — see the section below for the
+acoustic revert from `rnnt_phase5_8` back to `rnnt_phase5_5` (–24 % relative
+mean CER on the LCWO bench).
+
 ## Release v0.6.2
 
 The first reproducible real-audio bench (`eval/bench_lcwo.py`, 6 clips, identical decoder) ran on 2026-05-09 against four acoustic checkpoints — the bootstrap source `rnnt_phase5_5` plus its three descendants `rnnt_phase5_7` (v0.5.3), `rnnt_phase5_8` (v0.6.0/v0.6.1), and the new `rnnt_phase5_9`. The result inverts the live-test gut feel that drove v0.5.3 and v0.6.0 ship decisions:
