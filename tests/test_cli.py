@@ -34,13 +34,13 @@ def test_version_string_matches_package() -> None:
     )
 
 
-def test_top_level_parser_has_three_subcommands() -> None:
+def test_top_level_parser_has_expected_subcommands() -> None:
     parser = build_parser()
     # argparse exposes choices on the subparsers action.
     sub_action = next(
         a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction"
     )
-    assert set(sub_action.choices) == {"decode", "live", "models"}
+    assert set(sub_action.choices) == {"decode", "live", "gui", "models"}
 
 
 def test_version_flag_prints_and_exits(capsys: pytest.CaptureFixture[str]) -> None:

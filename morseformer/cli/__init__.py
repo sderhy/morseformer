@@ -8,6 +8,7 @@ import sys
 from morseformer import __version__
 
 from .decode import add_decode_parser, run_decode
+from .gui import add_gui_parser, run_gui
 from .live import add_live_parser, run_live
 from .models import add_models_parser, run_models
 
@@ -19,9 +20,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--version", action="version",
                    version=f"morseformer {__version__}")
-    sub = p.add_subparsers(dest="command", required=True, metavar="{decode,live,models}")
+    sub = p.add_subparsers(
+        dest="command", required=True, metavar="{decode,live,gui,models}",
+    )
     add_decode_parser(sub)
     add_live_parser(sub)
+    add_gui_parser(sub)
     add_models_parser(sub)
     return p
 
@@ -32,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_decode(args)
     if args.command == "live":
         return run_live(args)
+    if args.command == "gui":
+        return run_gui(args)
     if args.command == "models":
         return run_models(args)
     print(f"[morseformer] unknown command: {args.command}", file=sys.stderr)
