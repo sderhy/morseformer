@@ -26,7 +26,7 @@ class LiveTab(QWidget):
     """UI surface for the live mic flow. Pure widget — the worker is
     owned by the main window and connected via signals/slots."""
 
-    start_requested = Signal(int)   # device_index
+    start_requested = Signal(object)   # InputDevice
     stop_requested = Signal()
     refresh_requested = Signal()
 
@@ -99,28 +99,23 @@ class LiveTab(QWidget):
         try:
             devices = list_input_devices()
         except Exception as e:  # noqa: BLE001
-            self.device_combo.addItem(f"<no audio backend: {e}>", -1)
+            self.device_combo.addItem(f"<no audio backend: {e}>", None)
             self.device_combo.blockSignals(False)
             return
         default = default_input_device()
         default_idx = 0
         for i, d in enumerate(devices):
-            self.device_combo.addItem(d.label(), d.index)
-            if default is not None and d.index == default.index:
+            self.device_combo.addItem(d.label(), d)
+            if default is not None and d.backend == default.backend and d.index == default.index:
                 default_idx = i
         if not devices:
-            self.device_combo.addItem("<no input devices found>", -1)
+            self.device_combo.addItem("<no input devices found>", None)
         self.device_combo.setCurrentIndex(default_idx)
         self.device_combo.blockSignals(False)
 
     def selected_device(self) -> InputDevice | None:
-        idx = self.device_combo.currentData()
-        if idx is None or idx < 0:
-            return None
-        for d in list_input_devices():
-            if d.index == idx:
-                return d
-        return None
+        data = self.device_combo.currentData()
+        return data if isinstance(data, InputDevice) else None
 
     # ------------------------------------------------------------------ #
     # Slots (called by main window / worker)
@@ -150,10 +145,10 @@ class LiveTab(QWidget):
     # ------------------------------------------------------------------ #
 
     def _on_start_clicked(self) -> None:
-        idx = self.device_combo.currentData()
-        if idx is None or idx < 0:
+        device = self.selected_device()
+        if device is None:
             return
-        self.start_requested.emit(int(idx))
+        self.start_requested.emit(device)
 
     def _on_stop_clicked(self) -> None:
         self.stop_requested.emit()

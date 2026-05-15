@@ -41,7 +41,7 @@ dependencies = [
 
 [project.optional-dependencies]
 live = ["pasimple>=0.0.3"]
-gui = ["PySide6>=6.6", "sounddevice>=0.4", "scipy>=1.10"]
+gui = ["PySide6>=6.6", "sounddevice>=0.4", "scipy>=1.10", "pasimple>=0.0.3"]
 demo = ["gradio>=4.0"]
 dev = ["pytest>=7", "ruff>=0.1", "matplotlib>=3.7"]
 training = ["wandb", "hydra-core", "tqdm"]

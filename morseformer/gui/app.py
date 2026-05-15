@@ -23,7 +23,7 @@ from morseformer.gui.settings_panel import SettingsPanel
 
 
 class MainWindow(QMainWindow):
-    _start_live_requested = Signal(int)
+    _start_live_requested = Signal(object)
     _stop_live_requested = Signal()
     _decode_file_requested = Signal(str)
 

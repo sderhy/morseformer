@@ -44,6 +44,26 @@ def test_list_input_devices_returns_list() -> None:
         assert isinstance(d.name, str)
         assert d.max_channels >= 1
         assert d.default_sample_rate > 0
+        assert d.backend in ("sounddevice", "pulse")
+
+
+def test_pulse_sources_are_picked_up_when_pulse_running() -> None:
+    """If pactl + a Pulse socket exist (WSLg, native pulse / pipewire),
+    list_input_devices should expose at least one source. We do not
+    assert which one — only that the path actually returns something
+    when Pulse is reachable."""
+    import shutil
+
+    from morseformer.gui.audio_capture import _pulse_available, list_input_devices
+
+    if not (_pulse_available() and shutil.which("pactl")):
+        pytest.skip("no PulseAudio available on this host")
+    devices = list_input_devices()
+    backends = {d.backend for d in devices}
+    # If sounddevice already found inputs we may not see pulse here;
+    # that's the documented behaviour. Just check we got *something*.
+    assert devices, "PulseAudio is reachable but no input devices listed"
+    assert backends, "device list missing a backend tag"
 
 
 def test_rms_db_silent_audio_is_floor() -> None:

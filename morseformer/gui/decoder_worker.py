@@ -34,7 +34,7 @@ from morseformer.decoding.streaming import (
     StreamingDecoder,
     decode_offline,
 )
-from morseformer.gui.audio_capture import AudioCapture
+from morseformer.gui.audio_capture import AudioCapture, InputDevice
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
@@ -167,9 +167,12 @@ class DecoderWorker(QObject):
     # Live decode (slots)
     # ------------------------------------------------------------------ #
 
-    @Slot(int)
-    def start_live(self, device_index: int) -> None:
+    @Slot(object)
+    def start_live(self, device: InputDevice) -> None:
         if self._running:
+            return
+        if not isinstance(device, InputDevice):
+            self.error.emit("start_live needs an InputDevice")
             return
         try:
             self._ensure_model_loaded()
@@ -194,7 +197,7 @@ class DecoderWorker(QObject):
                         pass
 
             self._capture = AudioCapture(
-                device_index=device_index,
+                device=device,
                 target_sample_rate=cfg.sample_rate,
                 block_seconds=0.1,
                 on_audio=_on_audio,
@@ -204,7 +207,7 @@ class DecoderWorker(QObject):
             self._drain_timer.start()
             self._running = True
             self.status_changed.emit(
-                f"live • device {device_index} • native "
+                f"live • {device.name} • {device.backend} • native "
                 f"{self._capture.device_sample_rate} Hz → {cfg.sample_rate} Hz"
             )
         except Exception as e:  # noqa: BLE001 — surface every failure to UI
