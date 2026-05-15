@@ -23,7 +23,15 @@ from morseformer.cli.registry import (
 
 
 def test_version_string_matches_package() -> None:
-    assert __version__ == "0.6.0"
+    import re
+
+    pyproject = Path(__file__).resolve().parent.parent / "pyproject.toml"
+    m = re.search(r'^version\s*=\s*"([^"]+)"', pyproject.read_text(), re.MULTILINE)
+    assert m is not None, "could not parse version from pyproject.toml"
+    assert __version__ == m.group(1), (
+        f"morseformer.__version__ = {__version__!r} but pyproject.toml has "
+        f"version = {m.group(1)!r}; keep them in sync."
+    )
 
 
 def test_top_level_parser_has_three_subcommands() -> None:
