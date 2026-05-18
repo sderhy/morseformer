@@ -968,6 +968,18 @@ def _snap_to_word_boundary(text: str, start: int, end: int, slack: int = 12) -> 
     return start, end
 
 
+def _fit_to_max_chars(fragment: str, max_chars: int) -> str:
+    """Keep a prose fallback inside the training-window character budget."""
+    fragment = fragment.strip()
+    if len(fragment) <= max_chars:
+        return fragment
+    cut = fragment[:max_chars]
+    last_space = cut.rfind(" ")
+    if last_space > 0:
+        cut = cut[:last_space]
+    return cut.strip() or fragment[:max_chars].strip()
+
+
 def _sample_prose_from_lang(
     rng: np.random.Generator,
     lang: str,
@@ -977,7 +989,7 @@ def _sample_prose_from_lang(
     prose = _load_prose()
     text = prose.get(lang, "")
     if not text:
-        return sample_english_words(rng)
+        return _fit_to_max_chars(sample_english_words(rng), max_chars)
     n = len(text)
     target = int(rng.integers(min_chars, max_chars + 1))
     if n <= target:
@@ -985,6 +997,12 @@ def _sample_prose_from_lang(
     start = int(rng.integers(0, n - target + 1))
     end = start + target
     start, end = _snap_to_word_boundary(text, start, end)
+    if end - start > max_chars:
+        end = start + max_chars
+        if 0 < end < n and text[end] != " ":
+            prv = text.rfind(" ", start, end)
+            if prv != -1 and prv > start:
+                end = prv
     fragment = text[start:end].strip()
     return fragment if fragment else text[start : start + target].strip()
 
@@ -1006,7 +1024,7 @@ def sample_prose(
     """
     prose = _load_prose()
     if not prose:
-        return sample_english_words(rng)
+        return _fit_to_max_chars(sample_english_words(rng), max_chars)
     langs = sorted(prose.keys())
     lang = langs[int(rng.integers(0, len(langs)))]
     return _sample_prose_from_lang(rng, lang, min_chars, max_chars)
