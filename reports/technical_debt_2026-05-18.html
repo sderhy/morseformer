@@ -137,6 +137,34 @@
     .high { color: var(--high); background: #fef0c7; }
     .medium { color: var(--medium); background: #dbeafe; }
     .low { color: var(--low); background: #dcfae6; }
+    .resolved { color: #fff; background: var(--low); }
+
+    .banner {
+      background: #ecfdf3;
+      border: 1px solid #abefc6;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin: 0 0 22px;
+      color: #054f31;
+      font-size: 14px;
+    }
+
+    .banner strong { color: #034423; }
+
+    .strike { text-decoration: line-through; opacity: 0.6; }
+
+    .done-mark {
+      display: inline-block;
+      margin-left: 8px;
+      padding: 1px 6px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+      background: var(--low);
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
 
     table {
       width: 100%;
@@ -206,16 +234,32 @@
       <p>Point de développement après la mise à jour du <code>MODEL_CARD.md</code>, la correction du sampling prose, l'alignement Python 3.10-3.13, la correction du preset Gradio <code>prose</code> et l'ajout du garde-fou runtime Python.</p>
       <div class="meta">
         <span>Date : 2026-05-18</span>
+        <span>Mise à jour : 2026-05-19 (commits <code>bd1045c</code> + <code>92a6596</code>)</span>
         <span>Branche : <code>main</code></span>
-        <span>Dernier commit inspecté : <code>7498f9f</code></span>
-        <span>Checks : <code>ruff</code> OK, <code>pytest</code> 362 passed / 7 skipped</span>
+        <span>Dernier commit inspecté : <code>92a6596</code></span>
+        <span>Checks : <code>ruff</code> OK, <code>pytest</code> 24 passed (validation + release_gate)</span>
       </div>
     </header>
 
+    <div class="banner">
+      <strong>Mise à jour 2026-05-19 — Les deux P0 sont résolus.</strong>
+      P0-A (propagation de <code>ValidationConfig.matching()</code>) shippé en
+      commit <code>bd1045c</code> : 18 champs audio (operator + channel +
+      empty/post-silence) propagés depuis <code>DatasetConfig</code>, 8 tests
+      ajoutés dont un différentiel jittered vs clean qui prouve la propagation.
+      P0-B (release gate automatisé) shippé en commit <code>92a6596</code> :
+      <code>python -m eval.release_gate</code> sort un tableau pass/fail + un
+      JSON dans <code>reports/</code> + exit code 0/1, sur 10 catégories
+      calibrées sur <code>rnnt_phase5_5</code> + 0.5 pp absolu de margin.
+      <code>NEXT.md</code> archive le plan d'attaque ; la décision suivante est
+      libre entre plateau, data collection, ou nouvelle campagne de training
+      désormais mesurable honnêtement.
+    </div>
+
     <section class="summary" aria-label="Résumé">
       <div class="metric">
-        <strong>2</strong>
-        <span>risques haut niveau à traiter avant nouveaux fine-tunes</span>
+        <strong>0</strong>
+        <span>risque haut niveau ouvert (les 2 P0 sont résolus)</span>
       </div>
       <div class="metric">
         <strong>4</strong>
@@ -281,16 +325,16 @@
         </thead>
         <tbody>
           <tr>
-            <td><span class="status critical">P0</span></td>
+            <td><span class="status resolved">Résolu</span></td>
             <td><strong>Validation d'entraînement trop faible</strong><br><code>ValidationConfig.matching()</code> ne semble pas propager toute l'enveloppe synthétique pertinente.</td>
             <td>Le signal de validation peut saturer artificiellement. Les décisions de checkpoint reposent alors sur <code>last.pt</code> et des benches post-hoc au lieu d'un critère d'entraînement robuste.</td>
-            <td>Faire hériter explicitement les paramètres de canal, jitter, dash/dot ratio, gap inflation, word-gap inflation, QRM/QSB/QRN, drift et empty samples. Ajouter des tests qui prouvent cette propagation.</td>
+            <td><span class="strike">Faire hériter explicitement les paramètres de canal, jitter, dash/dot ratio, gap inflation, word-gap inflation, QRM/QSB/QRN, drift et empty samples. Ajouter des tests qui prouvent cette propagation.</span><br><strong>Fait 2026-05-19 — commit <code>bd1045c</code>.</strong> 18 champs propagés (6 operator + 8 channel + 4 empty/post-silence). 8 tests ajoutés dont un différentiel acid (jittered cfg produit ≥ N-1/N samples différents de clean cfg).</td>
           </tr>
           <tr>
-            <td><span class="status critical">P0</span></td>
+            <td><span class="status resolved">Résolu</span></td>
             <td><strong>Release gate encore trop manuel</strong><br>Les benches existent, mais il manque une commande unique de décision release.</td>
             <td>Risque de publier un checkpoint jugé meilleur qualitativement mais inférieur sur le corpus de référence, comme l'histoire <code>phase5_8</code> l'a montré.</td>
-            <td>Créer une commande <code>morseformer eval release-gate</code> ou <code>python -m eval.release_gate</code> qui sort JSON + tableau : LCWO, websdr, callsigns, silence, word gaps, contest, prose FR/EN.</td>
+            <td><span class="strike">Créer une commande <code>morseformer eval release-gate</code> ou <code>python -m eval.release_gate</code> qui sort JSON + tableau : LCWO, websdr, callsigns, silence, word gaps, contest, prose FR/EN.</span><br><strong>Fait 2026-05-19 — commit <code>92a6596</code>.</strong> <code>python -m eval.release_gate</code> avec manifest versionné <code>eval/release_gate_v1.json</code> (10 catégories : 7 LCWO + silence_fp + word_gap_inflation_6x + latency_rtf). Calibration sur <code>rnnt_phase5_5</code> + 0.5 pp margin. JSON dans <code>reports/release_gate_&lt;acoustic&gt;_&lt;date&gt;.json</code>, exit 0/1. 4 tests smoke end-to-end.</td>
           </tr>
           <tr>
             <td><span class="status medium">P2</span></td>
@@ -312,13 +356,14 @@
       <h2>Dettes Par Domaine</h2>
 
       <article class="item">
-        <span class="status high">Évaluation</span>
-        <h3>Le benchmark réel doit devenir l'arbitre principal</h3>
-        <p>Le projet a correctement appris de l'échec <code>phase5_9</code> et du retour à <code>rnnt_phase5_5</code>. La prochaine étape est de transformer cette discipline en outil obligatoire.</p>
+        <span class="status resolved">Évaluation — Résolu</span>
+        <h3>Le benchmark réel est désormais l'arbitre obligatoire</h3>
+        <p>Le release gate <code>eval/release_gate.py</code> rend la discipline mécanique. Tout candidate acoustic doit passer un manifest versionné (<code>eval/release_gate_v1.json</code>, 10 catégories) avant de pouvoir ship. Cf <code>NEXT.md</code> §4 anti-recommandations : « ne pas ship un acoustic candidate sans <code>release_gate</code> PASS ».</p>
         <ul>
-          <li>Créer un manifeste de release gate versionné.</li>
-          <li>Fixer les seuils de non-régression par catégorie.</li>
-          <li>Exporter les résultats en JSON pour comparer deux commits / checkpoints.</li>
+          <li><span class="strike">Créer un manifeste de release gate versionné.</span> <span class="done-mark">Fait</span></li>
+          <li><span class="strike">Fixer les seuils de non-régression par catégorie.</span> <span class="done-mark">Fait</span> (+0.5 pp absolu)</li>
+          <li><span class="strike">Exporter les résultats en JSON pour comparer deux commits / checkpoints.</span> <span class="done-mark">Fait</span></li>
+          <li>Prochaine étape : étendre le manifest avec de vraies données opérateur multi-bandes (cf domaine Données ci-dessous).</li>
         </ul>
       </article>
 
@@ -390,13 +435,13 @@
         <tbody>
           <tr>
             <td>1</td>
-            <td>Corriger / étendre <code>ValidationConfig.matching()</code>.</td>
-            <td>Validation entraînement plus fidèle aux curricula Phase 5.x.</td>
+            <td><span class="strike">Corriger / étendre <code>ValidationConfig.matching()</code>.</span> <span class="done-mark">Fait 2026-05-19</span></td>
+            <td>Validation entraînement fidèle aux curricula Phase 5.x — commit <code>bd1045c</code>.</td>
           </tr>
           <tr>
             <td>2</td>
-            <td>Créer un release gate automatisé.</td>
-            <td>Décision de checkpoint reproductible, moins dépendante des impressions live.</td>
+            <td><span class="strike">Créer un release gate automatisé.</span> <span class="done-mark">Fait 2026-05-19</span></td>
+            <td>Décision de checkpoint reproductible — commit <code>92a6596</code>, <code>python -m eval.release_gate</code>.</td>
           </tr>
           <tr>
             <td>3</td>
@@ -419,7 +464,7 @@
 
     <section>
       <h2>Conclusion</h2>
-      <p>Le projet est techniquement sain pour continuer : tests verts, modèle compact, CLI utilisable, documentation modèle remise à niveau. La dette principale n'est plus une dette de code brut ; c'est une dette de gouvernance expérimentale. Avant de relancer de nouveaux fine-tunes, il faut stabiliser le signal de validation et automatiser le release gate.</p>
+      <p><strong>Mise à jour 2026-05-19.</strong> Le projet est techniquement sain et la dette de gouvernance expérimentale qui motivait ce rapport est partiellement levée : les deux P0 sont fermés, le signal de validation reflète enfin la distribution d'entraînement, et la décision de ship est mécanique via <code>release_gate</code>. Les P2 (registry public/expérimental, formalisation des trois modes de fusion LM) restent ouverts mais ne bloquent plus un éventuel nouveau cycle de training. Lire <code>NEXT.md</code> §3 pour les options en aval (plateau / data collection / scale-up / switch d'architecture).</p>
     </section>
 
     <p class="footer">Rapport généré localement pour le dépôt <code>morseformer</code>. Ouvrir ce fichier directement dans un navigateur pour le partager ou l'imprimer.</p>
