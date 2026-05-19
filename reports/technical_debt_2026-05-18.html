@@ -203,12 +203,12 @@
   <main>
     <header>
       <h1>morseformer - anomalies et dettes techniques</h1>
-      <p>Point de développement après la mise à jour du <code>MODEL_CARD.md</code>, la correction du sampling prose, l'alignement Python 3.10-3.13 et la correction du preset Gradio <code>prose</code>.</p>
+      <p>Point de développement après la mise à jour du <code>MODEL_CARD.md</code>, la correction du sampling prose, l'alignement Python 3.10-3.13, la correction du preset Gradio <code>prose</code> et l'ajout du garde-fou runtime Python.</p>
       <div class="meta">
         <span>Date : 2026-05-18</span>
         <span>Branche : <code>main</code></span>
-        <span>Dernier commit inspecté : <code>35a0d86</code></span>
-        <span>Checks : <code>ruff</code> OK, <code>pytest</code> 359 passed / 7 skipped</span>
+        <span>Dernier commit inspecté : <code>7498f9f</code></span>
+        <span>Checks : <code>ruff</code> OK, <code>pytest</code> 362 passed / 7 skipped</span>
       </div>
     </header>
 
@@ -226,7 +226,7 @@
         <span>test rouge à l'heure actuelle</span>
       </div>
       <div class="metric">
-        <strong>4</strong>
+        <strong>6</strong>
         <span>quick wins traités depuis le premier rapport</span>
       </div>
     </section>
@@ -258,7 +258,12 @@
         <article class="card">
           <span class="status low">Corrigé</span>
           <h3>Packaging et démo</h3>
-          <p><code>requires-python</code> est borné à <code>&gt;=3.10,&lt;3.14</code>, la CI couvre Python 3.13, et la démo Gradio charge le LM pour le preset <code>prose</code>.</p>
+          <p><code>requires-python</code> est borné à <code>&gt;=3.10,&lt;3.14</code>, la CI couvre Python 3.13, la démo Gradio charge le LM pour le preset <code>prose</code>, et le premier décodage <code>prose</code> prévient du téléchargement LM.</p>
+        </article>
+        <article class="card">
+          <span class="status low">Corrigé</span>
+          <h3>Guidage utilisateur</h3>
+          <p>Un import avec Python hors plage supportée déclenche maintenant un message constructif avec les commandes <code>uv</code> et <code>python3.12 -m venv</code>. Le dossier <code>reports/</code> a aussi son README.</p>
         </article>
       </div>
     </section>
@@ -331,18 +336,19 @@
       <article class="item">
         <span class="status low">Packaging</span>
         <h3>Environnement local clarifié</h3>
-        <p>Le README prescrit désormais Python 3.12 pour le développement local, le package borne Python à <code>&gt;=3.10,&lt;3.14</code>, et la CI couvre 3.10-3.13.</p>
+        <p>Le README prescrit désormais Python 3.12 pour le développement local, le package borne Python à <code>&gt;=3.10,&lt;3.14</code>, la CI couvre 3.10-3.13, et le package affiche un message constructif si l'utilisateur lance une version hors support.</p>
         <ul>
           <li>Surveiller les futures versions PyTorch / torchaudio avant d'ouvrir Python 3.14.</li>
           <li>Garder la matrice CI alignée avec <code>requires-python</code>.</li>
           <li>Documenter l'installation CPU PyTorch recommandée.</li>
+          <li>Garder le message runtime aligné avec <code>requires-python</code>.</li>
         </ul>
       </article>
 
       <article class="item">
         <span class="status low">Documentation</span>
         <h3>README recentré</h3>
-        <p>Le README est recentré sur l'usage, le bench courant, l'architecture actuelle, le setup dev et les pointeurs historiques. <code>CHANGELOG.md</code> reste la source historique unique.</p>
+        <p>Le README est recentré sur l'usage, le bench courant, l'architecture actuelle, le setup dev et les pointeurs historiques. <code>CHANGELOG.md</code> reste la source historique unique, et <code>reports/README.md</code> explique le rôle des snapshots de dette.</p>
         <ul>
           <li>Éviter de réintroduire des sections longues de phase history dans le README.</li>
           <li>Maintenir <code>MODEL_CARD.md</code> et <code>CHANGELOG.md</code> comme sources détaillées.</li>
@@ -352,7 +358,7 @@
       <article class="item">
         <span class="status low">Produit</span>
         <h3>Gradio aligné sur le preset prose</h3>
-        <p>La démo Gradio charge maintenant le LM quand le preset sélectionné le demande. Un test smoke verrouille ce chemin sans lancer de serveur ni charger de checkpoint réel.</p>
+        <p>La démo Gradio charge maintenant le LM quand le preset sélectionné le demande. Un test smoke verrouille ce chemin sans lancer de serveur ni charger de checkpoint réel, et le menu indique que le premier décodage <code>prose</code> télécharge aussi le LM.</p>
         <ul>
           <li>Continuer à vérifier que file decode, live decode et Gradio partagent les mêmes defaults là où c'est applicable.</li>
           <li>Garder explicite le fait que le live reste acoustic-only.</li>
@@ -401,6 +407,11 @@
             <td>4</td>
             <td>Élargir les tests de cohérence des presets entre CLI, GUI et Gradio.</td>
             <td>Moins de divergence entre les surfaces utilisateur.</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>Ajouter un smoke eval minimal audio + silence.</td>
+            <td>Détection rapide des régressions grossières du pipeline decode.</td>
           </tr>
         </tbody>
       </table>
