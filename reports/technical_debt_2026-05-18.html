@@ -203,11 +203,11 @@
   <main>
     <header>
       <h1>morseformer - anomalies et dettes techniques</h1>
-      <p>Point de développement après la mise à jour du <code>MODEL_CARD.md</code>, la correction du sampling prose et le passage de la suite de tests.</p>
+      <p>Point de développement après la mise à jour du <code>MODEL_CARD.md</code>, la correction du sampling prose, l'alignement Python 3.10-3.13 et la correction du preset Gradio <code>prose</code>.</p>
       <div class="meta">
         <span>Date : 2026-05-18</span>
         <span>Branche : <code>main</code></span>
-        <span>Dernier commit inspecté : <code>c637aa1</code></span>
+        <span>Dernier commit inspecté : <code>35a0d86</code></span>
         <span>Checks : <code>ruff</code> OK, <code>pytest</code> 359 passed / 7 skipped</span>
       </div>
     </header>
@@ -218,16 +218,16 @@
         <span>risques haut niveau à traiter avant nouveaux fine-tunes</span>
       </div>
       <div class="metric">
-        <strong>6</strong>
-        <span>dettes techniques identifiées et actionnables</span>
+        <strong>4</strong>
+        <span>dettes techniques principales encore actionnables</span>
       </div>
       <div class="metric">
         <strong>0</strong>
         <span>test rouge à l'heure actuelle</span>
       </div>
       <div class="metric">
-        <strong>1</strong>
-        <span>fichier de documentation majeur remis à niveau</span>
+        <strong>4</strong>
+        <span>quick wins traités depuis le premier rapport</span>
       </div>
     </section>
 
@@ -255,6 +255,11 @@
           <h3>Sampling prose</h3>
           <p><code>sample_prose()</code> respecte désormais <code>max_chars</code> après snapping aux frontières de mots, ce qui protège la fenêtre audio de 6 secondes.</p>
         </article>
+        <article class="card">
+          <span class="status low">Corrigé</span>
+          <h3>Packaging et démo</h3>
+          <p><code>requires-python</code> est borné à <code>&gt;=3.10,&lt;3.14</code>, la CI couvre Python 3.13, et la démo Gradio charge le LM pour le preset <code>prose</code>.</p>
+        </article>
       </div>
     </section>
 
@@ -281,18 +286,6 @@
             <td><strong>Release gate encore trop manuel</strong><br>Les benches existent, mais il manque une commande unique de décision release.</td>
             <td>Risque de publier un checkpoint jugé meilleur qualitativement mais inférieur sur le corpus de référence, comme l'histoire <code>phase5_8</code> l'a montré.</td>
             <td>Créer une commande <code>morseformer eval release-gate</code> ou <code>python -m eval.release_gate</code> qui sort JSON + tableau : LCWO, websdr, callsigns, silence, word gaps, contest, prose FR/EN.</td>
-          </tr>
-          <tr>
-            <td><span class="status high">P1</span></td>
-            <td><strong>Contrat Python trop large</strong><br><code>pyproject.toml</code> annonce <code>&gt;=3.10</code>, mais la CI ne couvre que 3.10 à 3.12.</td>
-            <td>Sur la machine locale, <code>python3</code> était en 3.14.4 et les outils n'étaient pas disponibles. PyTorch / torchaudio peuvent aussi être plus fragiles hors matrice testée.</td>
-            <td>Borner <code>requires-python</code> à <code>&gt;=3.10,&lt;3.13</code>, ou ajouter officiellement 3.13 / 3.14 à la CI après validation des wheels PyTorch.</td>
-          </tr>
-          <tr>
-            <td><span class="status high">P1</span></td>
-            <td><strong>Démo Gradio et presets incohérents</strong><br>Le preset <code>prose</code> annonce l'usage du LM, mais <code>demo/app.py</code> charge seulement l'acoustic model.</td>
-            <td>L'utilisateur peut croire tester le même comportement que <code>morseformer decode --preset prose</code>, alors que la démo web ignore la fusion LM.</td>
-            <td>Soit charger <code>lm_phase5_2</code> dans la démo quand le preset le demande, soit masquer / renommer le preset web pour refléter acoustic-only.</td>
           </tr>
           <tr>
             <td><span class="status medium">P2</span></td>
@@ -336,35 +329,33 @@
       </article>
 
       <article class="item">
-        <span class="status medium">Packaging</span>
-        <h3>Environnement local encore implicite</h3>
-        <p>Le venv fonctionne, mais il a fallu choisir Python 3.12 via <code>uv</code>. La documentation de développement devrait prescrire ce chemin.</p>
+        <span class="status low">Packaging</span>
+        <h3>Environnement local clarifié</h3>
+        <p>Le README prescrit désormais Python 3.12 pour le développement local, le package borne Python à <code>&gt;=3.10,&lt;3.14</code>, et la CI couvre 3.10-3.13.</p>
         <ul>
-          <li>Ajouter une section dev setup : <code>uv venv .venv --python 3.12</code>, <code>uv pip install -e '.[dev,live,gui,demo]'</code>.</li>
-          <li>Aligner <code>requires-python</code> avec la matrice CI.</li>
+          <li>Surveiller les futures versions PyTorch / torchaudio avant d'ouvrir Python 3.14.</li>
+          <li>Garder la matrice CI alignée avec <code>requires-python</code>.</li>
           <li>Documenter l'installation CPU PyTorch recommandée.</li>
         </ul>
       </article>
 
       <article class="item">
-        <span class="status medium">Documentation</span>
-        <h3>Le README reste très historique</h3>
-        <p><code>MODEL_CARD.md</code> a été remis à niveau. Le README contient encore beaucoup d'histoire utile mais dense, avec des sections anciennes qui peuvent masquer l'état courant.</p>
+        <span class="status low">Documentation</span>
+        <h3>README recentré</h3>
+        <p>Le README est recentré sur l'usage, le bench courant, l'architecture actuelle, le setup dev et les pointeurs historiques. <code>CHANGELOG.md</code> reste la source historique unique.</p>
         <ul>
-          <li>Mettre en haut une section "current state" courte.</li>
-          <li>Déplacer l'historique long dans un document d'archive ou garder le changelog comme source historique.</li>
-          <li>Garder README = usage, modèle recommandé, limites, bench courant.</li>
+          <li>Éviter de réintroduire des sections longues de phase history dans le README.</li>
+          <li>Maintenir <code>MODEL_CARD.md</code> et <code>CHANGELOG.md</code> comme sources détaillées.</li>
         </ul>
       </article>
 
       <article class="item">
-        <span class="status medium">Produit</span>
-        <h3>GUI et démo web doivent exprimer le même contrat que la CLI</h3>
-        <p>La CLI est maintenant la surface la plus claire. La GUI et Gradio doivent soit implémenter les mêmes presets, soit afficher explicitement leurs limites.</p>
+        <span class="status low">Produit</span>
+        <h3>Gradio aligné sur le preset prose</h3>
+        <p>La démo Gradio charge maintenant le LM quand le preset sélectionné le demande. Un test smoke verrouille ce chemin sans lancer de serveur ni charger de checkpoint réel.</p>
         <ul>
-          <li>Vérifier que file decode, live decode et Gradio partagent les mêmes defaults.</li>
-          <li>Ajouter un test smoke sur la sélection de preset Gradio.</li>
-          <li>Éviter d'exposer un preset qui ne peut pas être réellement appliqué.</li>
+          <li>Continuer à vérifier que file decode, live decode et Gradio partagent les mêmes defaults là où c'est applicable.</li>
+          <li>Garder explicite le fait que le live reste acoustic-only.</li>
         </ul>
       </article>
 
@@ -403,18 +394,13 @@
           </tr>
           <tr>
             <td>3</td>
-            <td>Aligner le contrat Python et la doc de setup dev.</td>
-            <td>Nouveaux contributeurs et CI locale plus fiables.</td>
+            <td>Nettoyer la frontière registry public / expérimental.</td>
+            <td>Surface utilisateur plus lisible sans perdre la reproductibilité des phases ratées.</td>
           </tr>
           <tr>
             <td>4</td>
-            <td>Réparer la sémantique des presets dans Gradio / GUI.</td>
-            <td>Démo cohérente avec la CLI.</td>
-          </tr>
-          <tr>
-            <td>5</td>
-            <td>Nettoyer la frontière registry public / expérimental.</td>
-            <td>Surface utilisateur plus lisible sans perdre la reproductibilité des phases ratées.</td>
+            <td>Élargir les tests de cohérence des presets entre CLI, GUI et Gradio.</td>
+            <td>Moins de divergence entre les surfaces utilisateur.</td>
           </tr>
         </tbody>
       </table>
