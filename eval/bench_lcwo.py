@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from math import gcd
@@ -196,7 +197,11 @@ def make_morseformer_decoder(
                 model, audio, cfg, device,
                 lm=lm, fusion_weight=fusion_weight,
             )
-        return format_output(hyp)
+        # ``format_output`` adds line breaks after ``=`` / ``KN`` for
+        # human-readable display; collapse them here so the CER metric
+        # compares against the single-line reference transcripts.
+        text = format_output(hyp)
+        return re.sub(r"\s+", " ", text).strip()
 
     return _decode
 
@@ -204,6 +209,24 @@ def make_morseformer_decoder(
 # --------------------------------------------------------------------------- #
 # Run + reporting
 # --------------------------------------------------------------------------- #
+
+
+_PROSIGN_BRACKET_RE = re.compile(r"<\s*(BK|KN|SK|AR|KA|AS)\s*>", re.IGNORECASE)
+
+
+def _normalize_prosign_brackets(text: str) -> str:
+    """Map amateur prosign notations like ``<BK>`` to the canonical
+    glyph the model emits. ``<BK>`` → ``=`` (matches
+    ``format_output``); ``<KN>`` / ``<SK>`` / ``<AR>`` / ``<KA>`` /
+    ``<AS>`` drop their brackets so they become the bare digrams
+    the model also emits. Operator transcripts wrap prosigns in angle
+    brackets by convention; without this pass the reference would
+    keep raw ``<BK>`` while the model emits ``=`` and the CER would
+    eat the difference."""
+    def _sub(match: re.Match) -> str:
+        token = match.group(1).upper()
+        return " = " if token == "BK" else f" {token} "
+    return _PROSIGN_BRACKET_RE.sub(_sub, text)
 
 
 def _entries_to_samples(
@@ -214,6 +237,7 @@ def _entries_to_samples(
     for e in entries:
         audio = _load_audio(e.audio, sample_rate)
         gt_raw = e.gt.read_text(encoding="utf-8")
+        gt_raw = _normalize_prosign_brackets(gt_raw)
         gt_norm = _normalize_prose(gt_raw, e.lang)
         out.append(
             (

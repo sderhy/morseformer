@@ -2,14 +2,19 @@
 
 The model emits run-on prosigns as their literal multi-character form
 (``BK``, ``SK``, ``AR``, ``KN``…). For display we substitute the
-conventional one-character glyph where it improves readability:
+conventional one-character glyph where it improves readability and
+break the output into logical lines so the user is not staring at a
+wall of upper-case prose:
 
 * ``BK`` → ``=``  — both signal a break / hand-off; the single-char ``=``
   is much easier to spot in continuous prose than the digram ``BK`` that
   reads like part of a callsign.
+* After every ``=`` or standalone ``KN``, append a newline. These are
+  the conventional amateur over / break / hand-off markers, so a line
+  break there matches how operators read a QSO transcript.
 
-Word boundaries are required on both sides so we never touch ``BK``
-inside a callsign or word (``K1BK``, ``BKR…``).
+Word boundaries are required so we never touch ``BK`` / ``KN`` inside a
+callsign or other word (``K1BK``, ``KN4...``).
 """
 
 from __future__ import annotations
@@ -20,12 +25,24 @@ _PROSIGN_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bBK\b"), "="),
 )
 
+# Tokens that mark a logical break in the QSO and get a trailing newline
+# in display output. After ``_PROSIGN_SUBS`` has run, ``BK`` is already
+# ``=``; ``KN`` stays as a digram (the user can opt to read it that way
+# or treat it as the line break).
+_BREAK_TOKEN_RE = re.compile(r"(=|\bKN\b)[ \t]*")
+
 
 def format_output(text: str) -> str:
-    """Apply display-only prosign substitutions to a finished string."""
+    """Apply display-only prosign substitutions to a finished string.
+
+    Adds a newline after every ``=`` or standalone ``KN`` so a long
+    decoded transcript reads as a series of over / break segments
+    instead of one continuous upper-case run.
+    """
     for pat, rep in _PROSIGN_SUBS:
         text = pat.sub(rep, text)
-    return text
+    text = _BREAK_TOKEN_RE.sub(lambda m: m.group(1) + "\n", text)
+    return text.rstrip("\n")
 
 
 class StreamFormatter:

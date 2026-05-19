@@ -37,6 +37,7 @@ from eval.bench_lcwo import (
     _load_audio,
     _load_lm,
     _load_rnnt,
+    _normalize_prosign_brackets,
     load_manifest,
     make_morseformer_decoder,
 )
@@ -48,7 +49,6 @@ from morse_synth.operator import OperatorConfig
 from morseformer.cli.presets import get_preset
 from morseformer.cli.registry import resolve_model
 from morseformer.data.text import _normalize_prose
-from morseformer.decoding.postprocess import format_output
 from morseformer.features.frontend import FrontendConfig, extract_features
 
 _GREEN = "\033[32m"
@@ -147,7 +147,8 @@ def _run_manifest_clip(
         )
     entry = bench_entries[clip_id]
     audio = _load_audio(entry.audio, _SAMPLE_RATE)
-    gt = _normalize_prose(entry.gt.read_text(encoding="utf-8"), entry.lang)
+    gt_raw = _normalize_prosign_brackets(entry.gt.read_text(encoding="utf-8"))
+    gt = _normalize_prose(gt_raw, entry.lang)
     sample = Sample(
         sample_id=clip_id, text=gt, audio=audio, sample_rate=_SAMPLE_RATE
     )
@@ -212,8 +213,10 @@ def _run_silence(
     sample_chars: list[int] = []
     for _ in range(n):
         audio = _synth_silence_audio(rng, duration_s=6.0)
+        # ``decoder`` already returns text post ``format_output`` and
+        # collapsed to a single line (see make_morseformer_decoder).
         hyp = decoder(audio, _SAMPLE_RATE)
-        chars = len(format_output(hyp).strip())
+        chars = len(hyp.strip())
         sample_chars.append(chars)
         total_chars += chars
     mean_chars = total_chars / n
@@ -294,8 +297,10 @@ def _run_word_gap(
             freq=_CARRIER_HZ, sample_rate=_SAMPLE_RATE,
             channel=None,
         )
+        # ``decoder`` already returns text post ``format_output`` and
+        # collapsed to a single line.
         hyp = decoder(audio.astype(np.float32), _SAMPLE_RATE)
-        cer_total += character_error_rate(text, format_output(hyp))
+        cer_total += character_error_rate(text, hyp)
     mean_cer_pp = (cer_total / n) * 100.0
     threshold_pp = float(cat["max_pp"])
     return CategoryResult(
