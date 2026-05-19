@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "baseline_acoustic": "rnnt_phase5_5",
+  "calibration_date": "2026-05-19",
+  "calibration_source": "project_bench_lcwo_v1 (Phase 5_5 row); silence + word-gap baselines from project_v0_5_1_release / project_v0_5_2_release memory.",
+  "non_regression_margin_pp": 0.5,
+  "categories": [
+    {
+      "id": "lcwo_de_gaulle_fr",
+      "kind": "manifest_clip",
+      "clip_id": "lcwo-de-gaulle-24wpm",
+      "preset": "live",
+      "metric": "cer",
+      "baseline_pp": 1.97,
+      "max_pp": 2.47
+    },
+    {
+      "id": "lcwo_pacino_24_en",
+      "kind": "manifest_clip",
+      "clip_id": "lcwo-pacino-24wpm",
+      "preset": "live",
+      "metric": "cer",
+      "baseline_pp": 1.58,
+      "max_pp": 2.08
+    },
+    {
+      "id": "lcwo_pacino_20_en",
+      "kind": "manifest_clip",
+      "clip_id": "lcwo-pacino-20wpm",
+      "preset": "live",
+      "metric": "cer",
+      "baseline_pp": 1.68,
+      "max_pp": 2.18
+    },
+    {
+      "id": "lcwo_jme_voyais_fr",
+      "kind": "manifest_clip",
+      "clip_id": "lcwo-jme-voyais-deja-22wpm",
+      "preset": "live",
+      "metric": "cer",
+      "baseline_pp": 1.30,
+      "max_pp": 1.80
+    },
+    {
+      "id": "websdr_fav22_5letter",
+      "kind": "manifest_clip",
+      "clip_id": "websdr-fav22",
+      "preset": "live",
+      "metric": "cer",
+      "baseline_pp": 8.00,
+      "max_pp": 8.50
+    },
+    {
+      "id": "contest_synth_24wpm",
+      "kind": "manifest_clip",
+      "clip_id": "contest-synth-24wpm",
+      "preset": "live",
+      "metric": "cer",
+      "baseline_pp": 2.57,
+      "max_pp": 3.07
+    },
+    {
+      "id": "callsign_lcwo_001",
+      "kind": "manifest_clip",
+      "clip_id": "callsign_lcwo_001",
+      "preset": "live",
+      "metric": "cer",
+      "baseline_pp": 1.13,
+      "max_pp": 1.63
+    },
+    {
+      "id": "silence_fp",
+      "kind": "synthetic_silence",
+      "preset": "live",
+      "n_samples": 30,
+      "wpm_bins": [20.0, 24.0],
+      "seed": 20260519,
+      "baseline_chars_per_sample": 0.1,
+      "max_chars_per_sample": 0.5
+    },
+    {
+      "id": "word_gap_inflation_6x",
+      "kind": "synthetic_word_gap",
+      "preset": "live",
+      "n_samples": 20,
+      "wpm": 20.0,
+      "word_gap_inflation": 6.0,
+      "seed": 20260520,
+      "metric": "cer",
+      "baseline_pp": 1.5,
+      "max_pp": 2.5
+    },
+    {
+      "id": "latency_rtf",
+      "kind": "latency",
+      "window_seconds": 6.0,
+      "hop_seconds": 2.0,
+      "warmup": 3,
+      "trials": 10,
+      "max_rtf": 1.0
+    }
+  ]
+}

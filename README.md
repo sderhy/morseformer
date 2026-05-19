@@ -120,6 +120,28 @@ acoustic from `rnnt_phase5_8.pt` back to `rnnt_phase5_5.pt`:
 metrics and [CHANGELOG.md](CHANGELOG.md) for the full release-by-release
 bench history.
 
+### Shipping a release
+
+Every shippable acoustic must pass `eval/release_gate.py`, which runs the
+LCWO clips, a synthetic silence false-positive guard, an inflated word-gap
+guard, and a streaming-latency check against versioned thresholds calibrated
+on `rnnt_phase5_5` (the v0.6.2 baseline, see
+`eval/release_gate_v1.json`):
+
+```bash
+python -m eval.release_gate                          # gate the baseline
+python -m eval.release_gate --acoustic rnnt_phase5_X # gate a candidate
+python -m eval.release_gate --acoustic rnnt_phase5_X --lm lm_phase5_2
+```
+
+A JSON report lands in `reports/release_gate_<acoustic>_<date>.json` and the
+process exits 0 if every category is within its non-regression margin
+(default +0.5 pp absolute), 1 otherwise. The gate is the single
+ship-decision criterion: any new candidate must clear it before its
+checkpoint is promoted in the registry. See
+[reports/technical_debt_2026-05-18.html](reports/technical_debt_2026-05-18.html)
+for the P0 that motivated this gate.
+
 ## Architecture
 
 A compact 5-stage pipeline, fully local, CPU-real-time at inference:
