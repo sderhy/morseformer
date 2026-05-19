@@ -87,6 +87,193 @@ def test_matching_inherits_dataset_cfg() -> None:
     assert val_cfg.n_per_wpm == 2
 
 
+def test_matching_propagates_operator_envelope() -> None:
+    """``matching`` must copy every operator-timing field so the val
+    distribution sees the same jitter / dash-ratio / gap-inflation as
+    the training stream (fixes ``project_phase4_0b_result``)."""
+    ds_cfg = DatasetConfig(
+        operator_element_jitter_range=(0.0, 0.30),
+        operator_gap_jitter_range=(0.0, 0.50),
+        operator_dash_dot_ratio_range=(2.5, 4.5),
+        operator_gap_inflation_range=(0.8, 1.6),
+        operator_word_gap_inflation_range=(1.0, 8.0),
+        operator_run_on_pairs=(("S", "K", 0.5),),
+    )
+    val_cfg = ValidationConfig.matching(ds_cfg)
+    assert val_cfg.operator_element_jitter_range == (0.0, 0.30)
+    assert val_cfg.operator_gap_jitter_range == (0.0, 0.50)
+    assert val_cfg.operator_dash_dot_ratio_range == (2.5, 4.5)
+    assert val_cfg.operator_gap_inflation_range == (0.8, 1.6)
+    assert val_cfg.operator_word_gap_inflation_range == (1.0, 8.0)
+    assert val_cfg.operator_run_on_pairs == (("S", "K", 0.5),)
+
+
+def test_matching_propagates_realistic_channel_envelope() -> None:
+    """``matching`` must copy every channel-envelope field so the
+    realistic ladder uses the training distribution instead of the
+    Phase 3.1 numbers historically hardcoded in ``_render_one_realistic``."""
+    ds_cfg = DatasetConfig(
+        freq_offset_range_hz=(-80.0, 80.0),
+        qsb_rate_range_hz=(0.1, 2.0),
+        qsb_depth_range_db=(0.0, 25.0),
+        qrn_rate_range_per_sec=(0.0, 3.0),
+        carrier_drift_sigma_range_hz_per_s=(0.0, 2.5),
+        qrm_probability=0.40,
+        qrm_offset_range_hz=(-500.0, 500.0),
+        qrm_rel_db_range=(-25.0, -5.0),
+    )
+    val_cfg = ValidationConfig.matching(ds_cfg)
+    assert val_cfg.freq_offset_range_hz == (-80.0, 80.0)
+    assert val_cfg.qsb_rate_range_hz == (0.1, 2.0)
+    assert val_cfg.qsb_depth_range_db == (0.0, 25.0)
+    assert val_cfg.qrn_rate_range_per_sec == (0.0, 3.0)
+    assert val_cfg.carrier_drift_sigma_range_hz_per_s == (0.0, 2.5)
+    assert val_cfg.qrm_probability == 0.40
+    assert val_cfg.qrm_offset_range_hz == (-500.0, 500.0)
+    assert val_cfg.qrm_rel_db_range == (-25.0, -5.0)
+
+
+def test_matching_propagates_empty_and_post_silence_knobs() -> None:
+    """``matching`` must copy the empty-sample / post-emission-silence
+    fields so noise-only val builders reflect the Phase 5.6 sub-mode
+    when it is enabled in training."""
+    ds_cfg = DatasetConfig(
+        empty_sample_probability=0.40,
+        empty_sample_pseudo_morse_enabled=True,
+        post_emission_silence_probability=0.10,
+        post_emission_silence_text_chars=(2, 4),
+    )
+    val_cfg = ValidationConfig.matching(ds_cfg)
+    assert val_cfg.empty_sample_probability == 0.40
+    assert val_cfg.empty_sample_pseudo_morse_enabled is True
+    assert val_cfg.post_emission_silence_probability == 0.10
+    assert val_cfg.post_emission_silence_text_chars == (2, 4)
+
+
+def test_matching_overrides_win_over_dataset_cfg() -> None:
+    """Explicit kwargs to ``matching`` must override the inherited
+    ``DatasetConfig`` value — this is how callers force e.g.
+    ``n_per_wpm`` without changing the audio envelope."""
+    ds_cfg = DatasetConfig(operator_element_jitter_range=(0.0, 0.30))
+    val_cfg = ValidationConfig.matching(
+        ds_cfg, operator_element_jitter_range=(0.0, 0.05)
+    )
+    assert val_cfg.operator_element_jitter_range == (0.0, 0.05)
+
+
+def test_jittered_dataset_cfg_produces_visibly_different_val_audio() -> None:
+    """Acid test for the P0-A fix: a Phase-5.5 training config and a
+    bare clean config must produce visibly different val audio when
+    rendered with the same seed. Before this fix the val ignored every
+    jitter / channel knob, so both configs produced bit-identical
+    samples (operator was always ideal, channel was always hardcoded).
+
+    The front-end does per-utterance zero-mean / unit-variance
+    normalisation, which masks global energy differences — so the
+    comparison is per-sample feature tensors rather than aggregate
+    statistics.
+    """
+    from morseformer.data.validation import build_realistic_ladder_validation
+
+    clean_cfg = ValidationConfig(n_per_wpm=4, wpm_bins=(20.0,), seed=7)
+    jittered_cfg = ValidationConfig.matching(
+        DatasetConfig.phase_5_5(),
+        n_per_wpm=4,
+        wpm_bins=(20.0,),
+        seed=7,
+    )
+
+    clean = build_realistic_ladder_validation(
+        snrs_db=(10.0,), cfg=clean_cfg, n_per_cell=4
+    )
+    jittered = build_realistic_ladder_validation(
+        snrs_db=(10.0,), cfg=jittered_cfg, n_per_cell=4
+    )
+
+    assert len(clean) == len(jittered) > 0
+    differing = sum(
+        not torch.equal(a.features, b.features)
+        for a, b in zip(clean, jittered)
+    )
+    # Most samples must differ. We allow a small slack because two
+    # samples *could* coincidentally render identically when the
+    # random draws happen to land on near-default values, but if the
+    # propagation is wired the great majority of samples will differ.
+    assert differing >= len(clean) - 1, (
+        f"Only {differing}/{len(clean)} val samples differ between clean "
+        "and jittered configs — ValidationConfig.matching propagation is "
+        "not wired into the renderer."
+    )
+
+
+def test_clean_path_propagates_operator_envelope() -> None:
+    """The clean (non-realistic) render path must also respect the
+    operator envelope. Otherwise ``build_clean_validation`` and
+    ``build_snr_ladder_validation`` would silently keep the
+    ideal-timing assumption even when matching() was used."""
+    from morseformer.data.validation import build_snr_ladder_validation
+
+    ideal_cfg = ValidationConfig(n_per_wpm=4, wpm_bins=(20.0,), seed=11)
+    jittered_cfg = ValidationConfig.matching(
+        DatasetConfig.phase_5_5(),
+        n_per_wpm=4,
+        wpm_bins=(20.0,),
+        seed=11,
+    )
+
+    ideal = build_snr_ladder_validation(
+        snrs_db=(20.0,), cfg=ideal_cfg, n_per_cell=4
+    )
+    jittered = build_snr_ladder_validation(
+        snrs_db=(20.0,), cfg=jittered_cfg, n_per_cell=4
+    )
+
+    differing = sum(
+        not torch.equal(a.features, b.features)
+        for a, b in zip(ideal, jittered)
+    )
+    assert differing >= len(ideal) - 1, (
+        f"Only {differing}/{len(ideal)} samples differ on the AWGN ladder — "
+        "operator envelope is not wired into _render_one."
+    )
+
+
+def test_matching_default_cfg_keeps_phase_3_1_channel_numbers() -> None:
+    """``ValidationConfig()`` with defaults must keep the historical
+    Phase-3.1 channel numbers — required for backward compatibility
+    with bench scripts that build a bare ``ValidationConfig`` and call
+    ``build_realistic_ladder_validation`` directly."""
+    cfg = ValidationConfig()
+    assert cfg.freq_offset_range_hz == (-50.0, 50.0)
+    assert cfg.qsb_rate_range_hz == (0.05, 1.0)
+    assert cfg.qsb_depth_range_db == (0.0, 15.0)
+    assert cfg.qrn_rate_range_per_sec == (0.0, 1.0)
+    assert cfg.carrier_drift_sigma_range_hz_per_s == (0.0, 1.0)
+    assert cfg.qrm_probability == 0.25
+    assert cfg.qrm_offset_range_hz == (-300.0, 300.0)
+    assert cfg.qrm_rel_db_range == (-18.0, -8.0)
+
+
+def test_pseudo_morse_mode_adds_fourth_noise_bench_slice() -> None:
+    """When ``empty_sample_pseudo_morse_enabled`` is True the noise-only
+    builder must emit a 4th mode — same Phase 5.6 distribution the
+    training pipeline uses for digit-hallucination suppression."""
+    base = ValidationConfig(wpm_bins=(20.0,), seed=5)
+    on = ValidationConfig(
+        wpm_bins=(20.0,), seed=5, empty_sample_pseudo_morse_enabled=True
+    )
+    samples_off = build_noise_only_validation(cfg=base, n_per_mode=3)
+    samples_on = build_noise_only_validation(cfg=on, n_per_mode=3)
+    # Default (off): 3 modes × 3 = 9 samples.
+    assert len(samples_off) == 9
+    # Pseudo-morse on: 4 modes × 3 = 12 samples.
+    assert len(samples_on) == 12
+    # All samples are still labelled empty.
+    for s in samples_on:
+        assert s.text == ""
+        assert s.n_tokens == 0
+
+
 def test_noise_only_validation_has_empty_labels() -> None:
     """The false-positive bench must label every sample with an empty
     text + zero tokens, regardless of mode."""
