@@ -55,12 +55,23 @@ morseformer models download rnnt_phase5_7
 
 The four shipped presets — `live` (default), `prose`, `contest`, `conservative` — bundle the model + thresholds + optional LM behind one flag. `morseformer --help` lists every subcommand.
 
-Developing from a checkout? Same CLI, plus the existing scripts:
+## Development setup
+
+The quick start above is for users. For development, use a Python version
+that matches the CI matrix (3.10 / 3.11 / 3.12). Some systems expose
+`python3` as a newer interpreter such as Python 3.14; that can create a
+dev virtualenv outside the tested PyTorch / torchaudio range. The
+recommended local setup is:
 
 ```bash
 git clone git@github.com:sderhy/morseformer.git
 cd morseformer
-pip install -e ".[dev,live]"
+
+uv venv .venv --python 3.12
+source .venv/bin/activate
+uv pip install -e ".[dev,live,gui,demo]"
+
+ruff check .
 pytest -q
 
 # CLI works against local release/ and checkpoints/ trees, no Hub fetch.

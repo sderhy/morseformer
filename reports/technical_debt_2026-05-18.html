@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>morseformer - anomalies et dettes techniques</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #15202b;
+      --muted: #5b6673;
+      --line: #d7dde5;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --critical: #b42318;
+      --high: #b54708;
+      --medium: #175cd3;
+      --low: #067647;
+      --code: #eef2f6;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.5;
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 40px 24px 64px;
+    }
+
+    header {
+      margin-bottom: 28px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 24px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 32px 0 12px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 6px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 12px; }
+
+    a { color: #0b5cad; text-decoration-thickness: 1px; }
+
+    code {
+      background: var(--code);
+      border: 1px solid #d8e0ea;
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: 0.92em;
+    }
+
+    .meta {
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px 18px;
+      font-size: 14px;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 20px 0 26px;
+    }
+
+    .metric,
+    .card,
+    .item {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .metric {
+      padding: 14px 16px;
+    }
+
+    .metric strong {
+      display: block;
+      font-size: 26px;
+      line-height: 1.1;
+      margin-bottom: 3px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .card {
+      padding: 16px;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      margin-bottom: 8px;
+    }
+
+    .critical { color: var(--critical); background: #fee4e2; }
+    .high { color: var(--high); background: #fef0c7; }
+    .medium { color: var(--medium); background: #dbeafe; }
+    .low { color: var(--low); background: #dcfae6; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      display: table;
+    }
+
+    th,
+    td {
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+      padding: 11px 12px;
+      font-size: 14px;
+    }
+
+    th {
+      background: #eef2f6;
+      font-weight: 700;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    ul {
+      margin: 8px 0 0 20px;
+      padding: 0;
+    }
+
+    li { margin: 5px 0; }
+
+    .item {
+      padding: 14px 16px;
+      margin-bottom: 10px;
+    }
+
+    .evidence {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .footer {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 34px;
+      border-top: 1px solid var(--line);
+      padding-top: 18px;
+    }
+
+    @media (max-width: 840px) {
+      main { padding: 28px 16px 48px; }
+      h1 { font-size: 27px; }
+      .summary,
+      .grid { grid-template-columns: 1fr; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>morseformer - anomalies et dettes techniques</h1>
+      <p>Point de développement après la mise à jour du <code>MODEL_CARD.md</code>, la correction du sampling prose et le passage de la suite de tests.</p>
+      <div class="meta">
+        <span>Date : 2026-05-18</span>
+        <span>Branche : <code>main</code></span>
+        <span>Dernier commit inspecté : <code>c637aa1</code></span>
+        <span>Checks : <code>ruff</code> OK, <code>pytest</code> 359 passed / 7 skipped</span>
+      </div>
+    </header>
+
+    <section class="summary" aria-label="Résumé">
+      <div class="metric">
+        <strong>2</strong>
+        <span>risques haut niveau à traiter avant nouveaux fine-tunes</span>
+      </div>
+      <div class="metric">
+        <strong>6</strong>
+        <span>dettes techniques identifiées et actionnables</span>
+      </div>
+      <div class="metric">
+        <strong>0</strong>
+        <span>test rouge à l'heure actuelle</span>
+      </div>
+      <div class="metric">
+        <strong>1</strong>
+        <span>fichier de documentation majeur remis à niveau</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>État Actuel</h2>
+      <div class="grid">
+        <article class="card">
+          <span class="status low">Sain</span>
+          <h3>Qualité immédiate du code</h3>
+          <p>La suite locale passe dans le venv Python 3.12 : <code>ruff check .</code> et <code>pytest -q</code> sont verts.</p>
+          <p class="evidence">Dernier résultat : <code>359 passed, 7 skipped</code>.</p>
+        </article>
+        <article class="card">
+          <span class="status medium">À surveiller</span>
+          <h3>Surface projet très expérimentale</h3>
+          <p>Le dépôt contient à la fois produit public, historique de recherche, modèles candidats, modèles démotés, scripts de bench et GUI. C'est utile, mais la frontière public / laboratoire reste floue.</p>
+        </article>
+        <article class="card">
+          <span class="status low">Amélioré</span>
+          <h3>Documentation modèle</h3>
+          <p><code>MODEL_CARD.md</code> décrit maintenant <code>v0.6.3</code>, le checkpoint recommandé <code>rnnt_phase5_5.pt</code>, et le bench LCWO + websdr.</p>
+        </article>
+        <article class="card">
+          <span class="status low">Corrigé</span>
+          <h3>Sampling prose</h3>
+          <p><code>sample_prose()</code> respecte désormais <code>max_chars</code> après snapping aux frontières de mots, ce qui protège la fenêtre audio de 6 secondes.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Anomalies Prioritaires</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Priorité</th>
+            <th>Anomalie / dette</th>
+            <th>Impact</th>
+            <th>Action recommandée</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="status critical">P0</span></td>
+            <td><strong>Validation d'entraînement trop faible</strong><br><code>ValidationConfig.matching()</code> ne semble pas propager toute l'enveloppe synthétique pertinente.</td>
+            <td>Le signal de validation peut saturer artificiellement. Les décisions de checkpoint reposent alors sur <code>last.pt</code> et des benches post-hoc au lieu d'un critère d'entraînement robuste.</td>
+            <td>Faire hériter explicitement les paramètres de canal, jitter, dash/dot ratio, gap inflation, word-gap inflation, QRM/QSB/QRN, drift et empty samples. Ajouter des tests qui prouvent cette propagation.</td>
+          </tr>
+          <tr>
+            <td><span class="status critical">P0</span></td>
+            <td><strong>Release gate encore trop manuel</strong><br>Les benches existent, mais il manque une commande unique de décision release.</td>
+            <td>Risque de publier un checkpoint jugé meilleur qualitativement mais inférieur sur le corpus de référence, comme l'histoire <code>phase5_8</code> l'a montré.</td>
+            <td>Créer une commande <code>morseformer eval release-gate</code> ou <code>python -m eval.release_gate</code> qui sort JSON + tableau : LCWO, websdr, callsigns, silence, word gaps, contest, prose FR/EN.</td>
+          </tr>
+          <tr>
+            <td><span class="status high">P1</span></td>
+            <td><strong>Contrat Python trop large</strong><br><code>pyproject.toml</code> annonce <code>&gt;=3.10</code>, mais la CI ne couvre que 3.10 à 3.12.</td>
+            <td>Sur la machine locale, <code>python3</code> était en 3.14.4 et les outils n'étaient pas disponibles. PyTorch / torchaudio peuvent aussi être plus fragiles hors matrice testée.</td>
+            <td>Borner <code>requires-python</code> à <code>&gt;=3.10,&lt;3.13</code>, ou ajouter officiellement 3.13 / 3.14 à la CI après validation des wheels PyTorch.</td>
+          </tr>
+          <tr>
+            <td><span class="status high">P1</span></td>
+            <td><strong>Démo Gradio et presets incohérents</strong><br>Le preset <code>prose</code> annonce l'usage du LM, mais <code>demo/app.py</code> charge seulement l'acoustic model.</td>
+            <td>L'utilisateur peut croire tester le même comportement que <code>morseformer decode --preset prose</code>, alors que la démo web ignore la fusion LM.</td>
+            <td>Soit charger <code>lm_phase5_2</code> dans la démo quand le preset le demande, soit masquer / renommer le preset web pour refléter acoustic-only.</td>
+          </tr>
+          <tr>
+            <td><span class="status medium">P2</span></td>
+            <td><strong>Registry public mêlé aux expériences</strong><br><code>rnnt_phase5_9</code> et <code>rnnt_phase5_10</code> sont utiles pour l'historique, mais alourdissent la surface mentale.</td>
+            <td>Le projet est plus difficile à comprendre pour un nouvel utilisateur ou contributeur. Les modèles ratés / candidats ressemblent à des options utilisables.</td>
+            <td>Séparer registry public et registry expérimental : public = recommandé + legacy utiles ; expérimental = candidates, failed retrains, notes de reproduction.</td>
+          </tr>
+          <tr>
+            <td><span class="status medium">P2</span></td>
+            <td><strong>Fusion LM fragmentée</strong><br>La fusion LM est documentée comme offline-only ; le streaming live la désactive ou la traite comme expérimentale.</td>
+            <td>Comportement différent entre <code>decode</code>, <code>live</code>, scripts historiques et démo. Risque de confusion produit et de mesures non comparables.</td>
+            <td>Formaliser trois modes : acoustic greedy stable, offline prose fusion stable, streaming fusion experimental hidden. Ajouter tests CLI / docs sur cette sémantique.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Dettes Par Domaine</h2>
+
+      <article class="item">
+        <span class="status high">Évaluation</span>
+        <h3>Le benchmark réel doit devenir l'arbitre principal</h3>
+        <p>Le projet a correctement appris de l'échec <code>phase5_9</code> et du retour à <code>rnnt_phase5_5</code>. La prochaine étape est de transformer cette discipline en outil obligatoire.</p>
+        <ul>
+          <li>Créer un manifeste de release gate versionné.</li>
+          <li>Fixer les seuils de non-régression par catégorie.</li>
+          <li>Exporter les résultats en JSON pour comparer deux commits / checkpoints.</li>
+        </ul>
+      </article>
+
+      <article class="item">
+        <span class="status high">Données</span>
+        <h3>Le corpus réel est le facteur limitant</h3>
+        <p>Le modèle a déjà bénéficié d'un petit mix réel. Le gain marginal vient probablement plus de données réelles diverses que d'une architecture plus grande.</p>
+        <ul>
+          <li>Collecter plusieurs opérateurs, vitesses, récepteurs, bandes et conditions.</li>
+          <li>Stocker les transcriptions avec score d'alignement / qualité.</li>
+          <li>Séparer données d'entraînement, validation de décision, et tests live qualitatifs.</li>
+        </ul>
+      </article>
+
+      <article class="item">
+        <span class="status medium">Packaging</span>
+        <h3>Environnement local encore implicite</h3>
+        <p>Le venv fonctionne, mais il a fallu choisir Python 3.12 via <code>uv</code>. La documentation de développement devrait prescrire ce chemin.</p>
+        <ul>
+          <li>Ajouter une section dev setup : <code>uv venv .venv --python 3.12</code>, <code>uv pip install -e '.[dev,live,gui,demo]'</code>.</li>
+          <li>Aligner <code>requires-python</code> avec la matrice CI.</li>
+          <li>Documenter l'installation CPU PyTorch recommandée.</li>
+        </ul>
+      </article>
+
+      <article class="item">
+        <span class="status medium">Documentation</span>
+        <h3>Le README reste très historique</h3>
+        <p><code>MODEL_CARD.md</code> a été remis à niveau. Le README contient encore beaucoup d'histoire utile mais dense, avec des sections anciennes qui peuvent masquer l'état courant.</p>
+        <ul>
+          <li>Mettre en haut une section "current state" courte.</li>
+          <li>Déplacer l'historique long dans un document d'archive ou garder le changelog comme source historique.</li>
+          <li>Garder README = usage, modèle recommandé, limites, bench courant.</li>
+        </ul>
+      </article>
+
+      <article class="item">
+        <span class="status medium">Produit</span>
+        <h3>GUI et démo web doivent exprimer le même contrat que la CLI</h3>
+        <p>La CLI est maintenant la surface la plus claire. La GUI et Gradio doivent soit implémenter les mêmes presets, soit afficher explicitement leurs limites.</p>
+        <ul>
+          <li>Vérifier que file decode, live decode et Gradio partagent les mêmes defaults.</li>
+          <li>Ajouter un test smoke sur la sélection de preset Gradio.</li>
+          <li>Éviter d'exposer un preset qui ne peut pas être réellement appliqué.</li>
+        </ul>
+      </article>
+
+      <article class="item">
+        <span class="status low">Tests</span>
+        <h3>Les tests sont bons mais certains skips doivent rester intentionnels</h3>
+        <p>Le test É / À a été marqué obsolète parce que les accents ne sont plus une priorité release. C'est acceptable à condition que les skips soient périodiquement revus.</p>
+        <ul>
+          <li>Nommer les skips obsolètes avec une raison claire.</li>
+          <li>Ajouter un test de non-régression sur <code>sample_prose(max_chars=22)</code> dans les chemins corpus et fallback.</li>
+          <li>Surveiller le nombre de skips dans la CI.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section>
+      <h2>Plan Court Terme Recommandé</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Ordre</th>
+            <th>Travail</th>
+            <th>Résultat attendu</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td>Corriger / étendre <code>ValidationConfig.matching()</code>.</td>
+            <td>Validation entraînement plus fidèle aux curricula Phase 5.x.</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td>Créer un release gate automatisé.</td>
+            <td>Décision de checkpoint reproductible, moins dépendante des impressions live.</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td>Aligner le contrat Python et la doc de setup dev.</td>
+            <td>Nouveaux contributeurs et CI locale plus fiables.</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td>Réparer la sémantique des presets dans Gradio / GUI.</td>
+            <td>Démo cohérente avec la CLI.</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td>Nettoyer la frontière registry public / expérimental.</td>
+            <td>Surface utilisateur plus lisible sans perdre la reproductibilité des phases ratées.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Conclusion</h2>
+      <p>Le projet est techniquement sain pour continuer : tests verts, modèle compact, CLI utilisable, documentation modèle remise à niveau. La dette principale n'est plus une dette de code brut ; c'est une dette de gouvernance expérimentale. Avant de relancer de nouveaux fine-tunes, il faut stabiliser le signal de validation et automatiser le release gate.</p>
+    </section>
+
+    <p class="footer">Rapport généré localement pour le dépôt <code>morseformer</code>. Ouvrir ce fichier directement dans un navigateur pour le partager ou l'imprimer.</p>
+  </main>
+</body>
+</html>
