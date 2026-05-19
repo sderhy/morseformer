@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from morseformer import __version__
+from morseformer import __version__, _unsupported_python_message
 from morseformer.cli import build_parser, main
 from morseformer.cli.presets import DEFAULT_PRESET, PRESETS, get_preset
 from morseformer.cli.registry import (
@@ -32,6 +32,15 @@ def test_version_string_matches_package() -> None:
         f"morseformer.__version__ = {__version__!r} but pyproject.toml has "
         f"version = {m.group(1)!r}; keep them in sync."
     )
+
+
+def test_unsupported_python_message_is_actionable() -> None:
+    msg = _unsupported_python_message((3, 14, 4))
+    assert "Python 3.10-3.13" in msg
+    assert "Python 3.14.4" in msg
+    assert "uv venv .venv --python 3.12" in msg
+    assert "python3.12 -m venv venv" in msg
+    assert "pip install morseformer" in msg
 
 
 def test_top_level_parser_has_expected_subcommands() -> None:

@@ -50,3 +50,12 @@ def test_gradio_prose_preset_uses_lm(monkeypatch) -> None:
     assert calls["audio_shape"] == (800,)
     assert calls["confidence_threshold"] == 0.6
     assert calls["digit_threshold"] == 0.90
+
+
+def test_gradio_preset_info_mentions_prose_lm_download() -> None:
+    from demo import app as demo_app
+
+    info = demo_app._preset_info()
+
+    assert "prose:" in info
+    assert "first decode also downloads the LM" in info

@@ -155,6 +155,16 @@ def _example_files() -> list[list]:
     return examples
 
 
+def _preset_info() -> str:
+    parts: list[str] = []
+    for name in PRESETS:
+        description = PRESETS[name].description.split(".")[0]
+        if PRESETS[name].lm:
+            description += "; first decode also downloads the LM"
+        parts.append(f"{name}: {description}")
+    return ", ".join(parts)
+
+
 def build_app() -> gr.Blocks:
     preset_names = list(PRESETS.keys())
     with gr.Blocks(title="morseformer — open-source CW decoder") as app:
@@ -178,10 +188,7 @@ def build_app() -> gr.Blocks:
                     choices=preset_names,
                     value=DEFAULT_PRESET,
                     label="Preset",
-                    info=", ".join(
-                        f"{name}: {PRESETS[name].description.split('.')[0]}"
-                        for name in preset_names
-                    ),
+                    info=_preset_info(),
                 )
                 btn = gr.Button("Decode", variant="primary")
             with gr.Column():
