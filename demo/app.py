@@ -30,6 +30,7 @@ from morseformer.cli.presets import DEFAULT_PRESET, PRESETS
 from morseformer.cli.registry import resolve_model
 from morseformer.decoding.streaming import StreamingConfig, decode_offline
 from morseformer.models.acoustic import AcousticConfig
+from morseformer.models.lm import GptLM, LmConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
 _DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -64,9 +65,35 @@ def _load_model(name: str) -> RnntModel:
     return model
 
 
+def _load_lm(name: str) -> GptLM:
+    path = resolve_model(name)
+    ckpt = torch.load(str(path), map_location="cpu", weights_only=False)
+    state = dict(ckpt["model"])
+    for k, v in (ckpt.get("ema") or {}).items():
+        if k in state:
+            state[k] = v
+    cfg = ckpt["config"]["model"]
+    lm = GptLM(
+        LmConfig(
+            vocab_size=cfg["vocab_size"],
+            d_model=cfg["d_model"],
+            n_heads=cfg["n_heads"],
+            n_layers=cfg["n_layers"],
+            dropout=cfg["dropout"],
+        )
+    ).to(_DEVICE).eval()
+    lm.load_state_dict(state)
+    return lm
+
+
 @lru_cache(maxsize=4)
 def _get_model(name: str) -> RnntModel:
     return _load_model(name)
+
+
+@lru_cache(maxsize=4)
+def _get_lm(name: str) -> GptLM:
+    return _load_lm(name)
 
 
 def _to_mono_float32(audio_tuple: tuple[int, np.ndarray]) -> tuple[np.ndarray, int]:
@@ -103,7 +130,15 @@ def decode(audio, preset_name: str) -> str:
         confidence_threshold=preset.confidence_threshold,
         digit_threshold=preset.digit_threshold,
     )
-    text = decode_offline(model, arr, cfg, device=_DEVICE)
+    lm = _get_lm(preset.lm) if preset.lm and preset.fusion_weight > 0 else None
+    text = decode_offline(
+        model,
+        arr,
+        cfg,
+        device=_DEVICE,
+        lm=lm,
+        fusion_weight=preset.fusion_weight if lm is not None else 0.0,
+    )
     return text or "(decoder returned no text — try a louder / clearer sample)"
 
 
