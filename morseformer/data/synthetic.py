@@ -44,6 +44,7 @@ from morseformer.data.text import (
     PHASE_5_8_MIX,
     PHASE_5_9_MIX,
     PHASE_5_10_MIX,
+    PHASE_9_MIX,
     TextMix,
     sample_random_chars_phase4,
     sample_text,
@@ -284,6 +285,66 @@ class DatasetConfig:
     @property
     def target_samples(self) -> int:
         return int(round(self.target_duration_s * self.sample_rate))
+
+    @classmethod
+    def phase_9(cls, **overrides) -> DatasetConfig:
+        """Phase 9 — amateur-jargon enrichment + forced word-gap floor.
+
+        Two targeted changes vs Phase 5.5, designed to close the gaps
+        identified by the 2026-05-19 real-QSO audit (g3ses + g6pz) and
+        the Phase 8 failure on the release gate:
+
+        * ``text_mix = PHASE_9_MIX`` — bumps ``qso`` weight from 20 %
+          to 30 % so the new equipment-rich and slop templates appended
+          to :data:`_QSO_TEMPLATES` (rig brands, stutter-cut powers,
+          KN/BK boundary patterns, HR P / HW CPY / GD MNI bigrams)
+          appear at meaningful density during fine-tune. Funded by
+          trimming ``random`` and ``prose`` (FR diacritic gradient
+          preserved at 0.16 to hold the v0.4.0 gate).
+        * ``operator_word_gap_inflation_range = (3.0, 8.0)`` — minimum
+          inflation raised from 1.0 to 3.0 so every synthetic sample
+          has at least a 3× word gap. Counteracts the structural
+          forgetting observed in Phase 8 / 8a, where adding real audio
+          (always 1× word gaps) plus a synthetic stream ranging from
+          1× to 8× caused the model to collapse toward the lower end
+          and regress the word_gap_inflation_6× gate from 1.5 % CER to
+          ~10 % CER. With a 3× floor the model cannot get away with
+          assuming normal word spacing.
+
+        Other knobs identical to Phase 5.5 (channel, jitter, dash:dot
+        ratio, run-on prosigns, empty-sample probability). Bootstrap
+        target: ``checkpoints/phase5_5/best_rnnt.pt``. Recommended
+        mixed with the g3ses real-audio JSONL at
+        ``--real-audio-probability 0.10``.
+        """
+        base = dict(
+            channel_probability=1.0,
+            snr_db_range=(0.0, 30.0),
+            rx_filter_bw=500.0,
+            operator_element_jitter_range=(0.0, 0.30),
+            operator_gap_jitter_range=(0.0, 0.50),
+            operator_dash_dot_ratio_range=(2.5, 4.5),
+            operator_gap_inflation_range=(0.8, 1.6),
+            operator_word_gap_inflation_range=(3.0, 8.0),
+            operator_run_on_pairs=(
+                ("U", "R", 0.25),
+                ("S", "K", 0.50),
+                ("K", "N", 0.30),
+                ("B", "K", 0.30),
+            ),
+            freq_offset_range_hz=(-50.0, 50.0),
+            qsb_rate_range_hz=(0.05, 1.0),
+            qsb_depth_range_db=(0.0, 15.0),
+            qrn_rate_range_per_sec=(0.0, 1.0),
+            carrier_drift_sigma_range_hz_per_s=(0.0, 1.0),
+            empty_sample_probability=0.20,
+            qrm_probability=0.25,
+            qrm_offset_range_hz=(-300.0, 300.0),
+            qrm_rel_db_range=(-18.0, -8.0),
+            text_mix=PHASE_9_MIX,
+        )
+        base.update(overrides)
+        return cls(**base)
 
     @classmethod
     def phase_2_0(cls, **overrides) -> DatasetConfig:

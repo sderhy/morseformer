@@ -116,6 +116,10 @@ class RnntTrainConfig:
     real_audio_jsonl: Path | None = None
     real_audio_probability: float = 0.20
     real_audio_score_threshold: float = 0.7
+    # Phase 10 — word-gap augmentation on real-audio chunks. See
+    # ``RealAudioConfig.word_gap_augment_prob`` for the rationale.
+    real_audio_word_gap_augment_prob: float = 0.0
+    real_audio_word_gap_augment_inflation_range: tuple[float, float] = (1.5, 5.0)
 
 
 # --------------------------------------------------------------------- #
@@ -344,6 +348,10 @@ def train(cfg: RnntTrainConfig) -> dict:
             frontend=dataset_cfg.frontend,
             score_threshold=cfg.real_audio_score_threshold,
             seed=dataset_cfg.seed + 1,  # disjoint stream from synthetic
+            word_gap_augment_prob=cfg.real_audio_word_gap_augment_prob,
+            word_gap_augment_inflation_range=(
+                cfg.real_audio_word_gap_augment_inflation_range
+            ),
         )
         real_dataset = RealAudioCWDataset(real_cfg)
         dataset = MixedCWDataset(

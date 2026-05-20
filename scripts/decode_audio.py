@@ -170,6 +170,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "numeral failure mode (`061511813`, `5'9734`). "
                         "Recommended setting: 0.90. None = digits gate "
                         "at the same level as letters.")
+    p.add_argument("--post-segment", action="store_true", default=False,
+                   help="Run the dictionary-based word splitter "
+                        "(morseformer.decoding.word_splitter) on the "
+                        "final RNN-T / CTC outputs. Re-segments amateur "
+                        "run-on words (DROMCHRIS → DR OM CHRIS). Off by "
+                        "default; preferred for ragchew prose.")
     return p
 
 
@@ -349,9 +355,16 @@ def main(argv: list[str] | None = None) -> int:
             rnnt_hyp = format_output(rnnt_hyp_streaming or "")
         else:
             rnnt_hyp = format_output(" ".join(p for p in rnnt_parts if p))
+        if args.post_segment:
+            from morseformer.decoding.word_splitter import apply as ws_apply
+            ctc_hyp = ws_apply(ctc_hyp)
+            rnnt_hyp = ws_apply(rnnt_hyp)
         print(f"\nCTC  : {ctc_hyp!r}")
         print(f"RNN-T: {rnnt_hyp!r}")
     else:
+        if args.post_segment:
+            from morseformer.decoding.word_splitter import apply as ws_apply
+            ctc_hyp = ws_apply(ctc_hyp)
         print(f"\nCTC  : {ctc_hyp!r}")
 
     return 0

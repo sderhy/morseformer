@@ -27,6 +27,17 @@ def add_decode_parser(sub: argparse._SubParsersAction) -> None:
                    help="override the preset's LM. 'none' disables fusion.")
     p.add_argument("--device", default=None,
                    help="cpu / cuda / mps (default: auto)")
+    seg = p.add_mutually_exclusive_group()
+    seg.add_argument("--post-segment", dest="post_segment",
+                     action="store_true", default=None,
+                     help="Run the dictionary-based word splitter on the "
+                          "decoded output to re-segment amateur run-on "
+                          "words (DROMCHRIS → DR OM CHRIS). On by default "
+                          "for the 'prose' preset; off elsewhere.")
+    seg.add_argument("--no-post-segment", dest="post_segment",
+                     action="store_false",
+                     help="Disable the post-segmentation word splitter "
+                          "even when the preset enables it.")
 
 
 def run_decode(args: argparse.Namespace) -> int:
@@ -60,6 +71,13 @@ def run_decode(args: argparse.Namespace) -> int:
                       "--fusion-weight", str(fusion_weight)]
     if args.device:
         forwarded += ["--device", args.device]
+    # CLI overrides win, otherwise the preset's setting takes effect.
+    post_segment = (
+        args.post_segment if args.post_segment is not None
+        else preset.post_segment
+    )
+    if post_segment:
+        forwarded += ["--post-segment"]
 
     # Local import so that `morseformer --help` does not pull torch.
     from scripts.decode_audio import main as decode_main

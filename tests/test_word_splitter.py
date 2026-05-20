@@ -1,0 +1,185 @@
+"""Unit tests for the dictionary-based word splitter.
+
+Locks the post-process behaviour against the failure modes observed
+on the 2026-05-19 real-QSO audit (run-on amateur idioms, glued
+``DE`` + callsign, BT prosign normalisation).
+"""
+
+from __future__ import annotations
+
+from morseformer.decoding.word_splitter import (
+    SplitterConfig,
+    apply,
+    is_callsign,
+    split_token,
+    structural_normalise,
+)
+
+
+# --------------------------------------------------------------------- #
+# split_token — the DP segmentation
+# --------------------------------------------------------------------- #
+
+
+def test_split_token_handles_canonical_run_on() -> None:
+    # The exact patterns the user flagged on 2026-05-20.
+    assert split_token("DROMCHRIS") == ["DR", "OM", "CHRIS"]
+    assert split_token("MYWXIS") == ["MY", "WX", "IS"]
+    assert split_token("ESANTISLW") == ["ES", "ANT", "IS", "LW"] or \
+           split_token("ESANTISLW") == ["ES", "ANT", "IS"]
+    # LW is not in dict so it may stay as-is at the tail; both acceptable.
+
+
+def test_split_token_keeps_dictionary_word_intact() -> None:
+    for tok in ("DR", "OM", "RIG", "DIPOLE", "MORNING", "CHRIS"):
+        assert split_token(tok) == [tok]
+
+
+def test_split_token_keeps_callsigns_intact() -> None:
+    for call in ("F4HYY", "G3SES", "G6PZ", "F6KRK", "MM0XXX", "K1ABC",
+                 "DL5XYZ", "JA1ABC"):
+        assert split_token(call) == [call]
+
+
+def test_split_token_keeps_unknown_tokens_unchanged() -> None:
+    # Random gibberish: no dict coverage → return as-is.
+    assert split_token("XYZQWERTY") == ["XYZQWERTY"]
+    assert split_token("ZZZ") == ["ZZZ"]
+
+
+def test_split_token_does_not_split_short_tokens() -> None:
+    # Below min_token_to_split (=6) → return as-is.
+    assert split_token("AB") == ["AB"]
+    assert split_token("ABC") == ["ABC"]
+    assert split_token("ABCD") == ["ABCD"]
+    # DEAR, BEAR — 4-char common words that would otherwise greedily
+    # split into DE+AR / BE+AR (both amateur idioms in the dict).
+    assert split_token("DEAR") == ["DEAR"]
+    assert split_token("BEAR") == ["BEAR"]
+    # BROWN — 5-char common word: with BR removed from dict and the
+    # 6-char minimum, no split.
+    assert split_token("BROWN") == ["BROWN"]
+
+
+def test_split_token_requires_coverage() -> None:
+    # "FBXYZ" — only FB matches, rest unknown → coverage 2/5 = 40 % < 0.80
+    # → return as-is.
+    assert split_token("FBXYZ") == ["FBXYZ"]
+
+
+def test_split_token_respects_custom_config_thresholds() -> None:
+    # Default rejects FBXYZWQ (coverage 28 % < 0.90).
+    assert split_token("FBXYZWQ") == ["FBXYZWQ"]
+    # Relaxed config accepts it as ["FB", "XYZWQ"].
+    cfg = SplitterConfig(min_coverage=0.2, min_words=1)
+    assert split_token("FBXYZWQ", cfg) == ["FB", "XYZWQ"]
+
+
+def test_split_token_does_not_oversegment_proper_nouns() -> None:
+    """Proper nouns like PARIS or BERGE are NOT in the amateur dict.
+    Their letter-pairs (P+AR+IS, BE+R+GE) match dict entries
+    individually but include at least one unknown char in the middle,
+    so the matched-only coverage stays under 0.90 and the token is
+    kept intact. Tokens whose matched pieces actually cover 100 % of
+    the chars (HERGE → HER + GE) will still split — best-effort
+    post-process, not a perfect proper-noun detector."""
+    assert split_token("PARIS") == ["PARIS"]
+    assert split_token("BERGE") == ["BERGE"]
+    # IC73TT (operator stutter rig name) only has IC + 73 in dict
+    # (4/6 = 67% coverage) → stays opaque.
+    assert split_token("IC73TT") == ["IC73TT"]
+
+
+def test_split_token_handles_max_length_guard() -> None:
+    # Tokens above ``max_token_chars`` are returned as-is to keep the
+    # DP bounded.
+    long_token = "DROMCHRIS" * 5  # 45 chars
+    assert split_token(long_token) == [long_token]
+
+
+# --------------------------------------------------------------------- #
+# is_callsign
+# --------------------------------------------------------------------- #
+
+
+def test_is_callsign_accepts_standard_forms() -> None:
+    for call in ("F4HYY", "G3SES", "K1ABC", "JA1XYZ", "MM0ABC", "BV5OK"):
+        assert is_callsign(call), call
+
+
+def test_is_callsign_rejects_dict_words() -> None:
+    for word in ("HELLO", "DROMCHRIS", "PWR", "TKS"):
+        assert not is_callsign(word), word
+
+
+def test_is_callsign_accepts_portable_suffix() -> None:
+    assert is_callsign("F4HYY/P")
+    assert is_callsign("G3SES/M")
+
+
+# --------------------------------------------------------------------- #
+# structural_normalise — user-suggested regex pass
+# --------------------------------------------------------------------- #
+
+
+def test_structural_splits_de_glued_to_callsign() -> None:
+    assert "DE F4HYY" in structural_normalise("CQ DEF4HYY K")
+    assert "DE G3SES" in structural_normalise("MYRIG DEG3SES BK")
+
+
+def test_structural_normalises_bt_prosign() -> None:
+    out = structural_normalise("FB OM = TKS FER QSO")
+    assert "= \n" in out or "=\n" in out
+    out2 = structural_normalise("HW CPY + BK")
+    # Both + and = render as "=\n"
+    assert "=" in out2 and "\n" in out2
+
+
+def test_structural_isolates_end_of_message_markers() -> None:
+    out = structural_normalise("CQ DE F4HYY K G3SES DE F4HYY KN")
+    lines = out.splitlines()
+    # K should sit alone on its line (trailing position of first
+    # transmission), KN similarly at end.
+    assert any(line.endswith(" K") for line in lines), out
+    assert any(line.endswith(" KN") for line in lines), out
+    # Each marker is followed by an empty line.
+    assert "\n\n" in out
+
+
+# --------------------------------------------------------------------- #
+# apply — full pipeline
+# --------------------------------------------------------------------- #
+
+
+def test_apply_on_user_supplied_run_on_sample() -> None:
+    """The user's 2026-05-20 example:
+    'FB DROMCHRIS  alLOK MYWXIS CLOUDYSUMRAINTE  ...'
+
+    Should at minimum recover 'DR OM CHRIS' and 'MY WX IS' even if
+    other tokens stay opaque (operator stutter / cut-numbers).
+    """
+    raw = "FB DROMCHRIS MYWXIS"
+    out = apply(raw)
+    # Tokens must appear in this order in the result
+    for token in ("FB", "DR", "OM", "CHRIS", "MY", "WX", "IS"):
+        assert token in out.split(), f"missing {token!r} in {out!r}"
+
+
+def test_apply_keeps_prosign_lines_intact() -> None:
+    raw = "CQ DE F4HYY = TNX FER QSO BK"
+    out = apply(raw)
+    # Each segment preserved, "=" gets a newline after it.
+    assert "F4HYY" in out
+    assert "TNX" in out
+    assert "BK" in out
+
+
+def test_apply_preserves_already_clean_text() -> None:
+    raw = "CQ DE F4HYY K"
+    out = apply(raw)
+    # Trailing K should still get the prosign-isolation treatment but
+    # the content is unchanged.
+    assert "CQ" in out
+    assert "DE" in out
+    assert "F4HYY" in out
+    assert "K" in out

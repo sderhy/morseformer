@@ -39,6 +39,12 @@ class Preset:
     digit_threshold: float
     lm: str | None
     fusion_weight: float
+    # When True, run the dictionary-based word splitter
+    # (``morseformer.decoding.word_splitter``) on the decoder output
+    # to re-segment amateur run-on words (DROMCHRIS → DR OM CHRIS).
+    # Off by default; on for the ``prose`` preset where offline
+    # readability is the primary goal.
+    post_segment: bool = False
 
 
 PRESETS: dict[str, Preset] = {
@@ -54,14 +60,16 @@ PRESETS: dict[str, Preset] = {
     ),
     "prose": Preset(
         name="prose",
-        description="Offline file decode with LM shallow fusion (λ=0.7). "
-                    "Best for poetry / ragchew / book reading from a "
-                    "recorded .wav.",
+        description="Offline file decode with LM shallow fusion (λ=0.7) "
+                    "and dictionary-based word splitter on the output "
+                    "(re-segments run-on amateur words). Best for poetry "
+                    "/ ragchew / book reading from a recorded .wav.",
         acoustic="rnnt_phase5_5",
         confidence_threshold=0.6,
         digit_threshold=0.90,
         lm="lm_phase5_2",
         fusion_weight=0.7,
+        post_segment=True,
     ),
     "contest": Preset(
         name="contest",

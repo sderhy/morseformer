@@ -41,8 +41,13 @@ That's it. **No GPU needed** — the decoder runs on CPU by default.
 ### More options
 
 ```bash
-# LM shallow fusion (λ=0.7) for prose / ragchew audio.
+# LM shallow fusion (λ=0.7) + word splitter for prose / ragchew audio.
+# The splitter re-segments run-on amateur idioms (DROMCHRIS → DR OM CHRIS)
+# using a built-in amateur + English dictionary.
 morseformer decode my_recording.wav --preset prose
+# Force the splitter on or off independently of the preset:
+morseformer decode my_recording.wav --post-segment
+morseformer decode my_recording.wav --preset prose --no-post-segment
 
 # Live presets — looser for fast exchanges, tighter for very noisy bands.
 morseformer live --preset contest

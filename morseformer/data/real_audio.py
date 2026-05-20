@@ -60,6 +60,22 @@ class RealAudioConfig:
                            Default 0.5 keeps almost everything; raise
                            to 0.7+ for a stricter dataset.
         seed:              Base RNG seed (combined with worker id).
+
+        word_gap_augment_prob:
+            Phase 10 — probability of inserting an inflated silence at
+            one random word boundary of the chunk's audio before
+            yielding. Real operators do not pause 6× between words, so
+            the unaugmented stream collapses the model's
+            ``operator_word_gap_inflation`` learning from the synthetic
+            curriculum (cf the +7.9 pp word_gap_inflation_6× regression
+            measured on Phase 8). 0.0 disables augmentation (legacy
+            behaviour).
+        word_gap_augment_inflation_range:
+            Range for the per-augmentation inflation factor. Each
+            augmented sample picks ``inflation = U(lo, hi)`` and
+            inserts ``inflation × 0.4 s`` (= one nominal 20-WPM word
+            gap) of silence at the chosen boundary, then truncates the
+            chunk back to ``target_samples``.
     """
 
     jsonl_path: Path
@@ -69,6 +85,9 @@ class RealAudioConfig:
     frontend: FrontendConfig = field(default_factory=FrontendConfig)
     score_threshold: float = 0.5
     seed: int = 0
+
+    word_gap_augment_prob: float = 0.0
+    word_gap_augment_inflation_range: tuple[float, float] = (1.5, 5.0)
 
     @property
     def target_samples(self) -> int:
@@ -145,15 +164,71 @@ class RealAudioCWDataset(IterableDataset):
             start = int(round(float(rec["start_s"]) * self.cfg.sample_rate))
             end = int(round(float(rec["end_s"]) * self.cfg.sample_rate))
             audio = audio_full[start:end].astype(np.float32, copy=True)
+            label = rec["label"]
+            if (
+                self.cfg.word_gap_augment_prob > 0.0
+                and rng.random() < self.cfg.word_gap_augment_prob
+            ):
+                audio = _augment_word_gap(
+                    audio, label,
+                    sample_rate=self.cfg.sample_rate,
+                    rng=rng,
+                    inflation_range=self.cfg.word_gap_augment_inflation_range,
+                )
             audio = _pad_or_truncate(audio, target_samples)
             features = extract_features(audio, self.cfg.sample_rate, self.cfg.frontend)
-            tokens = encode(rec["label"])
+            tokens = encode(label)
             yield {
                 "features": torch.from_numpy(features),
                 "tokens": torch.tensor(tokens, dtype=torch.int64),
                 "n_frames": int(features.shape[0]),
                 "n_tokens": int(len(tokens)),
             }
+
+
+def _augment_word_gap(
+    audio: np.ndarray,
+    label: str,
+    *,
+    sample_rate: int,
+    rng: np.random.Generator,
+    inflation_range: tuple[float, float],
+    nominal_gap_s: float = 0.4,
+) -> np.ndarray:
+    """Insert an inflated silent gap at one random word boundary of
+    ``audio``. Returns a new array; caller is responsible for
+    pad/truncate to the target window.
+
+    The word boundary is picked from the literal SPACE positions of
+    ``label``; the audio time corresponding to that boundary is
+    estimated by linear interpolation (uniform-speed assumption — the
+    aligned chunks are short enough, ~6 s, that this is a reasonable
+    approximation). The inflation factor is sampled per call from
+    ``inflation_range`` and multiplied by ``nominal_gap_s`` (one
+    word-gap-equivalent at ~20 WPM by default).
+
+    Phase 10 motivation: the un-augmented real-audio stream has
+    word gaps that hover around 1× (normal operator timing), while the
+    synthetic stream uses ``operator_word_gap_inflation_range`` up to
+    8×. The two distributions are contradictory and the model
+    collapses toward the narrow end (cf the +7.9 pp regression on
+    ``word_gap_inflation_6x`` measured for Phase 8 / 8a / 9). With
+    this augmentation, the real stream also exposes the inflated
+    end so the model retains the Phase-5.5 word-gap robustness while
+    still benefiting from real-operator acoustic cues.
+    """
+    if " " not in label or len(audio) == 0:
+        return audio
+    boundaries = [i for i, c in enumerate(label) if c == " "]
+    if not boundaries:
+        return audio
+    bi = boundaries[int(rng.integers(0, len(boundaries)))]
+    audio_pos = int(round(bi / len(label) * len(audio)))
+    audio_pos = max(0, min(audio_pos, len(audio)))
+    inflation = float(rng.uniform(*inflation_range))
+    gap_samples = int(round(inflation * nominal_gap_s * sample_rate))
+    silence = np.zeros(gap_samples, dtype=audio.dtype)
+    return np.concatenate([audio[:audio_pos], silence, audio[audio_pos:]])
 
 
 class MixedCWDataset(IterableDataset):

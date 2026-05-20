@@ -74,7 +74,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Operator subdir to audit. Repeatable. "
              f"Default: {', '.join(_DEFAULT_OPERATORS)}",
     )
-    p.add_argument("--acoustic", default="rnnt_phase5_5")
+    p.add_argument("--acoustic", default="rnnt_phase5_5",
+                   help="Registry name of the acoustic checkpoint. "
+                        "Ignored when --ckpt is given.")
+    p.add_argument("--ckpt", type=Path, default=None,
+                   help="Direct path to an RNN-T checkpoint, bypassing "
+                        "the model registry. Useful for newly-trained "
+                        "candidates (e.g. checkpoints/phase8/best_rnnt.pt) "
+                        "before they get a registry entry.")
     p.add_argument(
         "--preset", default="live",
         help="Decode preset (live / prose / contest / conservative).",
@@ -87,6 +94,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--show-hyp-chars", type=int, default=0,
         help="Print the first N chars of each hypothesis (debugging).",
+    )
+    p.add_argument(
+        "--post-segment", action="store_true",
+        help="Run the dictionary-based word splitter on the decoder "
+             "output (see morseformer.decoding.word_splitter). Closes "
+             "the run-on word failure mode observed on real OTA where "
+             "operators collapse inter-word gaps to zero "
+             "(DROMCHRIS → DR OM CHRIS, MYWXIS → MY WX IS).",
     )
     args = p.parse_args(argv)
 
@@ -103,7 +118,10 @@ def main(argv: list[str] | None = None) -> int:
         f"acoustic={args.acoustic} preset={args.preset} device={device}"
     )
 
-    acoustic = _load_rnnt(resolve_model(args.acoustic), device)
+    ckpt_path = args.ckpt if args.ckpt is not None else resolve_model(args.acoustic)
+    acoustic_label = str(args.ckpt) if args.ckpt is not None else args.acoustic
+    print(f"[audit] acoustic checkpoint: {ckpt_path} (label={acoustic_label})")
+    acoustic = _load_rnnt(ckpt_path, device)
     lm = None
     fusion_weight = 0.0
     if preset.lm and preset.fusion_weight > 0:
@@ -117,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         digit_threshold=preset.digit_threshold,
         lm=lm, fusion_weight=fusion_weight,
         sample_rate=_SAMPLE_RATE, carrier_hz=_CARRIER_HZ,
+        post_segment=args.post_segment,
     )
 
     per_clip: list[dict] = []

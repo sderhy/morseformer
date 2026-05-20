@@ -174,6 +174,51 @@ _QSO_TEMPLATES: tuple[str, ...] = (
     "FB OM! TU 73",
     "GL! ES 73",
     "TNX OM! CUL",
+    # Phase 9 — equipment-rich ragchew templates with brand+model
+    # strings and stutter-cut power. Closes the 2026-05-19 audit gap
+    # where "RIG IS FT DX 10" / "PWR IS 1TTW" / "ACOM AMP" were
+    # decoded letter-by-letter.
+    "RIG IS {rig_brand}",
+    "RIG HR {rig_brand}",
+    "RIG IS {rig_brand} ES ANT IS {ant}",
+    "MY RIG IS {rig_brand} PWR {pwr_stutter}",
+    "RIG IS {rig_brand} WID {rig_brand} AMP",
+    "{rig_brand} PWR {pwr_stutter} ANT {ant}",
+    "RIG IS AN {rig_brand}",
+    "RIG IS AN {rig_brand} WID AN {rig_brand} AMP AT {pwr_stutter}",
+    "PWR {pwr_stutter}",
+    "PWR IS {pwr_stutter}",
+    "PWR IS {pwr_stutter} ANT IS {ant}",
+    "ANT IS A {ant}",
+    "ANT IS {ant} AT {zone} M",
+    "{cs} DE {cs} RIG {rig_brand} ANT {ant} BK",
+    "TNX FER UR INFO HR P RIG IS {rig_brand}",
+    "TNX FER UR INFO HR P RIG IS {rig_brand} PWR {pwr_stutter}",
+    "TKS FER UR INR INFO HR RIG IS {rig_brand}",
+    "{cs} DE {cs} TNX FER QSO RIG IS {rig_brand}",
+    "WX IS {wx} TEMP IS {temp}C",
+    "WX IS {wx} T EMP IS {temp}C",
+    "WX HR {wx} TEMP {temp}",
+    "MY QTH IS {qth} ES WX IS {wx}",
+    # Phase 9 — slop-only templates so the model sees these short
+    # bigrams in isolation (not just embedded in longer lines).
+    "{slop}",
+    "{slop} {cs}",
+    "{cs} {slop}",
+    "{slop} = {slop}",
+    "BK {slop} BK",
+    "BK {slop} ES {slop} BK",
+    # Phase 9 — opening / closing with run-on prosigns at message
+    # boundary (KN <pause> CALL DE CALL pattern from real ragchews,
+    # decoded as "Y" on the 2026-05-19 audit because the model had
+    # only seen KN mid-template).
+    "KN {cs} DE {cs}",
+    "KN {cs} DE {cs} TNX FER QSO",
+    "KN {cs} DE {cs} {slop}",
+    "{cs} DE {cs} BK",
+    "= {cs} DE {cs} BK",
+    "{cs} DE {cs} KN",
+    "BK {cs} DE {cs}",
 )
 
 
@@ -244,19 +289,96 @@ _RIG_MODELS: tuple[str, ...] = (
     "2000", "1000",
 )
 
+# Phase 9 — full brand+model strings. Real operators name their rig as
+# "FT DX 10", "IC 7300", "K3", not just "7300". The model only ever saw
+# the bare model number in PHASE_3_4_MIX, hence brand prefixes were
+# decoded letter-by-letter on the 2026-05-19 g6pz audit (G1 sent
+# "RIG IS FT DX 10" → decoded "RIG IS F X 10").
+_RIG_BRAND_MODELS: tuple[str, ...] = (
+    # Yaesu
+    "FT DX 10", "FT DX 101", "FT DX 3000", "FT DX 9000",
+    "FT 991", "FT 991A", "FT 891", "FT 857", "FT 817",
+    "FT 847", "FT 950", "FT 1000",
+    # Icom
+    "IC 7300", "IC 7610", "IC 705", "IC 7851", "IC 9700",
+    "IC 718", "IC 706", "IC 7100", "IC 756",
+    # Elecraft
+    "K3", "K3S", "K4", "KX3", "KX2", "K2",
+    # Kenwood
+    "TS 590", "TS 890", "TS 990", "TS 480", "TS 2000",
+    # Amplifiers (often mentioned in the same breath as the rig)
+    "ACOM 1500", "ACOM 600S", "ACOM 1010",
+    "ALPHA 87A", "ALPHA 89", "ALPHA 8410",
+    "SPE 1K", "SPE 1.5K", "SPE 2K",
+)
+
 _POWERS: tuple[str, ...] = (
     "5", "10", "25", "50", "75", "100", "200", "400", "500", "1000",
+)
+
+# Phase 9 — cut-number power strings with operator stutter. Real CW
+# operators send "100 W" as "1OOW" using cut-numbers (T=0) and often
+# stutter the T (sending it doubled or tripled). The Phase 8 audit
+# showed "1TTW" (=100W) decoded as "1TW" because the model never saw
+# the stutter pattern. Captures the common power values.
+_STUTTER_POWERS: tuple[str, ...] = (
+    "1TW",   "1TTW",          # 100W (canonical + stutter)
+    "5TW",   "5TTW",          # 500W
+    "2TW",   "2TTW",          # 200W
+    "3TW",   "3TTW",          # 300W
+    "4TW",   "4TTW",          # 400W
+    "5W", "1AW",              # 50W, 1000W with cut-A
+    "1KW",   "1KTW", "1KTTW", # 1000W as 1KW with stutter
+    "2KW",   "2KTW",
+    "5KW",
+    "75W",  "25W",  "15W",
+    "1TT",  "5TT",  "2TT", "5T",
+    "1TTT",                   # 1000 cut (rare)
 )
 
 _ANTENNAS: tuple[str, ...] = (
     "DIPOLE", "VERTICAL", "YAGI", "LOOP", "BEAM", "GP",
     "HEXBEAM", "WINDOM", "MAGLOOP", "ENDFED", "LONGWIRE",
     "G5RV", "OCF", "FAN DIPOLE", "INV V",
+    # Phase 9 — additional common antenna names heard in real ragchews.
+    "INV VEE", "EFHW", "OCFD", "EWE", "BEVERAGE", "LWA",
+    "MULTIBAND DIPOLE", "TRAP DIPOLE", "QUAD", "DELTA LOOP",
+    "MOXON", "ZEPP", "MOBILE WHIP",
 )
 
 _WX: tuple[str, ...] = (
     "SUNNY", "CLOUDY", "RAINY", "WINDY", "CLEAR", "FOGGY",
     "SNOWY", "COLD", "WARM", "MILD", "HOT", "FAIR", "COOL",
+)
+
+# Phase 9 — short slop bigrams / trigrams common in real ragchews
+# but absent from the existing QSO templates. Decoded as gibberish on
+# the 2026-05-19 audit (G1 "HR P" → missing entirely). Used by
+# dedicated templates rather than a slot so each phrase appears as a
+# self-contained QSO fragment.
+_SLOP_PHRASES: tuple[str, ...] = (
+    "HR P",         # here pleased
+    "HW CPY",       # how copy
+    "HW CPY OM",
+    "GD MNI",       # good morning
+    "GD EVE",       # good evening
+    "GD NITE",
+    "TNX FB",
+    "TKS FB",
+    "FB OM ES",
+    "FB FB",
+    "TKS FER",
+    "TNX FER",
+    "OK OK",
+    "ES TU",
+    "PSE PSE",
+    "AGN AGN",
+    "TKS FER UR RPT",
+    "TNX FER UR INFO",
+    "TKS FER UR INR INFO",
+    "OK OM TU",
+    "GE OM ES TKS",
+    "GM OM ES GD QSO",
 )
 
 
@@ -271,10 +393,25 @@ def _fill_slot(slot: str, rng: np.random.Generator) -> str:
         return _QTHS[int(rng.integers(0, len(_QTHS)))]
     if slot == "rig":
         return _RIG_MODELS[int(rng.integers(0, len(_RIG_MODELS)))]
+    if slot == "rig_brand":
+        # Phase 9 — full brand+model string (e.g. "FT DX 10", "IC 7300").
+        return _RIG_BRAND_MODELS[
+            int(rng.integers(0, len(_RIG_BRAND_MODELS)))
+        ]
     if slot == "pwr":
         return _POWERS[int(rng.integers(0, len(_POWERS)))]
+    if slot == "pwr_stutter":
+        # Phase 9 — cut-number power with operator stutter (e.g. "1TTW").
+        return _STUTTER_POWERS[
+            int(rng.integers(0, len(_STUTTER_POWERS)))
+        ]
     if slot == "ant":
         return _ANTENNAS[int(rng.integers(0, len(_ANTENNAS)))]
+    if slot == "slop":
+        # Phase 9 — short amateur slop phrase rendered inline.
+        return _SLOP_PHRASES[
+            int(rng.integers(0, len(_SLOP_PHRASES)))
+        ]
     if slot == "wx":
         return _WX[int(rng.integers(0, len(_WX)))]
     if slot == "temp":
@@ -1482,6 +1619,31 @@ PHASE_5_10_MIX = TextMix(
     random=0.10,
     prose=0.08,
     prose_fr=0.16,
+)
+
+
+# Phase 9 — amateur-jargon enrichment. Closes the 2026-05-19 audit
+# gaps on equipment names (FT DX 10, IC 7300, ACOM), stutter cuts
+# (1TTW = 100W), and slop bigrams (HR P, HW CPY, GD MNI). The jargon
+# itself rides on the existing ``qso`` slot via the new templates
+# appended to ``_QSO_TEMPLATES``; the mix simply increases the ``qso``
+# weight to 30 % so the model sees these patterns at meaningful
+# density during fine-tune.
+#
+# Funded by trimming ``random`` (18 → 8) and ``prose`` (8 → 6). FR
+# diacritic gradient preserved at ``prose_fr=0.16`` (the v0.4.0
+# release gate). Random stays at 8 % so the anti-hallucination
+# benefit from Phase 3.2 is not lost.
+PHASE_9_MIX = TextMix(
+    callsign=0.10,
+    qcode=0.10,
+    qso=0.30,
+    numeric=0.12,
+    words=0.04,
+    random=0.08,
+    prose=0.06,
+    prose_fr=0.16,
+    contest_dense=0.04,
 )
 
 

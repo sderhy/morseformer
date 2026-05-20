@@ -172,6 +172,7 @@ def make_morseformer_decoder(
     beam_width: int = 1,
     beam_emit_bonus: float = 0.0,
     callsign_prior_weight: float = 0.0,
+    post_segment: bool = False,
 ):
     def _decode(audio: np.ndarray, sr: int) -> str:
         if sr != sample_rate:
@@ -201,6 +202,9 @@ def make_morseformer_decoder(
         # human-readable display; collapse them here so the CER metric
         # compares against the single-line reference transcripts.
         text = format_output(hyp)
+        if post_segment:
+            from morseformer.decoding.word_splitter import apply as ws_apply
+            text = ws_apply(text)
         return re.sub(r"\s+", " ", text).strip()
 
     return _decode

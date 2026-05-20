@@ -70,7 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
                             "phase3_4", "phase3_5", "phase3_6",
                             "phase4_0_a", "phase4_0_b", "phase4_0_c",
                             "phase5_3", "phase5_5", "phase5_6", "phase5_7",
-                            "phase5_8", "phase5_9", "phase5_10"),
+                            "phase5_8", "phase5_9", "phase5_10",
+                            "phase9"),
                    default="phase2_1",
                    help="Dataset preset. phase2_1 = Phase 3.0 clean "
                         "ablation. phase3_1 = realistic HF channel. "
@@ -135,6 +136,21 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Drop aligned chunks below this difflib score "
                         "(alignment confidence). 0.7 keeps ≈98 %% of the "
                         "Alice/ToL ebook2cw dataset.")
+    # Phase 10 — word-gap augmentation on real-audio chunks
+    p.add_argument("--real-audio-word-gap-augment-prob", type=float, default=0.0,
+                   help="Phase 10: probability of inserting an inflated "
+                        "silence at one random word boundary of each "
+                        "real-audio chunk before yielding. Counteracts "
+                        "the word_gap_inflation regression observed when "
+                        "mixing real audio (always-1x gaps) with synthetic "
+                        "(1-8x gaps).")
+    p.add_argument(
+        "--real-audio-word-gap-augment-inflation-range", default="1.5,5.0",
+        help="Range 'lo,hi' for the per-augmentation inflation factor "
+             "(units of one nominal 20-WPM word gap, ~0.4 s). Default "
+             "1.5,5.0 spans roughly half a second to two seconds of "
+             "added silence per augmented chunk.",
+    )
     return p
 
 
@@ -175,7 +191,9 @@ def main(argv: list[str] | None = None) -> int:
         d_joint=args.d_joint,
     )
 
-    if args.curriculum == "phase5_10":
+    if args.curriculum == "phase9":
+        dataset_cfg = DatasetConfig.phase_9(seed=args.seed)
+    elif args.curriculum == "phase5_10":
         dataset_cfg = DatasetConfig.phase_5_10(seed=args.seed)
     elif args.curriculum == "phase5_9":
         dataset_cfg = DatasetConfig.phase_5_9(seed=args.seed)
@@ -262,6 +280,11 @@ def main(argv: list[str] | None = None) -> int:
         real_audio_jsonl=args.real_audio_jsonl,
         real_audio_probability=args.real_audio_probability,
         real_audio_score_threshold=args.real_audio_score_threshold,
+        real_audio_word_gap_augment_prob=args.real_audio_word_gap_augment_prob,
+        real_audio_word_gap_augment_inflation_range=tuple(
+            float(x) for x in
+            args.real_audio_word_gap_augment_inflation_range.split(",")
+        ),
     )
 
     print(f"[train_rnnt] device={device} dtype={args.dtype} "
