@@ -1,138 +1,123 @@
-# NEXT — handoff post-P0 closeout (2026-05-19)
+# NEXT — handoff post-Phase 8-10 + word-splitter (2026-05-21)
 
 ## §1. État actuel
 
-**Version courante : v0.6.3** (commit `69b4b62`, tag `v0.6.3`, GitHub +
-PyPI + HF). Acoustic recommandé inchangé : `rnnt_phase5_5.pt`. Cwget-
-parity live-validée sur ragchew2 IC-7300.
+**Version recommandée : v0.6.3 (acoustic `rnnt_phase5_5`).** Inchangé.
+Cwget-parity live-validée. Tous les outils du gate v1 passent (+ le
+nouveau post-process word splitter activé sur le preset `prose`).
 
-### Les deux P0 du rapport de dette sont fermés
+### Bilan de la session 2026-05-19 → 2026-05-21
 
-| P0 | Sujet | Commit | Tests |
-|---|---|---|---|
-| **P0-A** | `ValidationConfig.matching()` propage maintenant les 18 champs audio (operator + channel + empty/post-silence) depuis `DatasetConfig` | `bd1045c` | 20/20 (8 nouveaux : propagation par champ + différentiel jittered vs clean + override + mode pseudo-Morse) |
-| **P0-B** | `python -m eval.release_gate` — ship-decision unique, 10 catégories calibrées sur `rnnt_phase5_5` + 0.5 pp margin, JSON report + exit 0/1 | `92a6596` | 4/4 (orchestrator end-to-end via mini-manifest silence+latency) |
+| Travail | Statut | Commit |
+|---|---|---|
+| Audit real-QSO `g3ses` + `g6pz` (28 clips ~30 min) | gap 8× confirmé | `edf2ae1` |
+| Real-audio prep pipeline | 159 + 102 chunks alignés, score ~0.78 | `0e45f9e` |
+| Phase 8 fine-tune | FAIL gate (5/10) | non shippé |
+| Phase 8a recipe-conservative | FAIL gate (5/10) | non shippé |
+| Phase 9 jargon enrichment + word_gap floor | FAIL gate (6/10) — closest | code shippé, weights non |
+| Phase 10 real-audio word_gap augmentation | FAIL gate (2/10) — backfired | code shippé, weights non |
+| **Post-process word splitter** | **shippé ON sur preset `prose`** | `6c0a5c6` |
 
-Le bug `ValidationConfig.matching()` documenté dans
-`project_phase4_0b_result` est résolu. Le release gate ferme le
-post-mortem de `project_phase5_9_failure` (vibes-driven ship-then-
-revert). Voir `project_release_gate_v1` (memory).
+### Verdict
 
-### Bilan plateaux — inchangé
+**Le fine-tune real-audio naïf sur 30 min ne marche pas.** La régression
+structurelle sur `word_gap_inflation_6×` (1.5 % → 9-14 %) vient du
+mismatch de distribution : real audio = word gaps ~1×, synth = U(1,8).
+Le modèle collapse vers la moyenne et perd la queue 6×. Tentatives de
+fix (jargon, augmentation par insertion silence) n'ont pas suffi —
+sans **forced alignment** du corpus real, l'augmentation injecte du
+silence à des positions ~aléatoires et empire le problème.
 
-| Phase | Mécanisme | Verdict |
-|-------|-----------|---------|
-| 5.6 retrain | digit-threshold inférence | shippé inférence-only en v0.5.2 |
-| 5.7 amateur-corpus | 5NN cut-numbers, run-on prosigns | shippé v0.5.3, modeste |
-| 5.8 EN-literary | Moby Dick + classiques | reverti en v0.6.2 |
-| 5.9 letter-groups | densification ciphers | régression 6/6 |
-| 5.10 callsign bump | mix 0.10→0.18 funded from random | régression 6/7 cible incluse |
-| 7.0 beam search | frame-synchronous beam | strictement pire que greedy |
-| 7.1 ITU prior | callsign-shape rescorer | diversity collapse, aucun effet |
+**Phase 5.5 reste recommandé.** Le commit `6c0a5c6` ship en parallèle :
 
-Plafond structurel maintenu. Mais on a maintenant les outils pour
-mesurer une future tentative honnêtement.
-
----
-
-## §2. Plan d'attaque immédiat — aucun (les deux P0 sont fermés)
-
-Cette section est volontairement vide. Les deux P0 du
-`reports/technical_debt_2026-05-18.html` sont résolus, le projet est
-techniquement prêt soit pour une release plateau (Option A) soit pour
-une nouvelle campagne de training disciplinée (Options C / E / F).
-
-**Comment décider la suite** :
-
-1. Tourner `python -m eval.release_gate` sur `rnnt_phase5_5` pour
-   confirmer que la baseline passe les seuils dans la version actuelle
-   du code (vérification de non-régression silencieuse depuis
-   2026-05-09).
-2. Si la baseline passe, **choisir une option du §3 ci-dessous**.
-3. Si la baseline échoue, comprendre *pourquoi* avant tout autre
-   travail — c'est un signal que quelque chose a régressé sans qu'on
-   le voie.
+1. **Jargon templates Phase 9** (text.py) — pour toute future Phase 11+
+   sans real-audio mix
+2. **Real-audio augmentation infra** (real_audio.py) — OFF par défaut,
+   disponible pour expérimentation
+3. **Word splitter post-process** (decoding/word_splitter.py + preset
+   integration) — gain -1 à -1.4 pp WER sur g3ses/g6pz held-out
 
 ---
 
-## §3. Options en aval — par ordre d'ambition
+## §2. Plan d'attaque immédiat — aucun
 
-### Option A — plateau pur (recommandation par défaut)
+Le projet est dans un état stable. Le gate passe, la dette technique
+est traitée, le post-process apporte un gain modeste mais réel sur
+ragchew. Pas de chantier bloquant.
 
-Accepter v0.6.3 comme version finale. Maintenance utilisateur seulement.
-**Coût** : 0. **Risque** : 0.
+---
+
+## §3. Options en aval
+
+### Option A — plateau (recommandation)
+
+Accepter `v0.6.3 + word splitter ON pour prose` comme version finale.
 
 ### Option B — packaging / UX
 
-~~À faire~~ **DONE en v0.6.3** (PyPI, GUI desktop, Gradio demo, README
-recentré, CI 3.10-3.13, dev setup, runtime guardrail).
+DONE en v0.6.3. RAS.
 
-### Option C — collecte data + bench plus large
+### Option C — collecte data + forced alignment
 
-Préparer le terrain pour une hypothétique Phase 8 : RBN pipeline,
-transcription ragchew2 callsigns, mining WebSDR + W1AW, FAV22 time-
-stretch. **Coût** : 1-2 semaines, indépendant du modèle. **Gain**
-immédiat : 0. Conditionnel sur Phase 8.
+Si on veut un *vrai* Phase 11, deux conditions préalables :
 
-**Important** : tout nouveau corpus aligné mérite d'être ajouté au
-manifest `release_gate_v1.json` (ou un `v2.json` si la calibration
-baseline change) — pas seulement à un bench script ad hoc.
+1. **Plus de corpus real** : ≥ 2 h d'audio multi-opérateurs / multi-
+   bandes avec transcripts time-aligned, OU
+2. **Forced alignment** sur le corpus existant : CTC alignment pour
+   identifier les positions exactes de chaque caractère dans l'audio
+   → enable une vraie data augmentation word-gap. ~1-2 jours d'engineering
+   (utiliser `torchaudio.functional.forced_align` ou similaire).
 
-### Option D — Phase 7 alternatif : post-process greedy
+Avec l'une des deux, Phase 11 peut envisager : `DatasetConfig.phase_9`
+(jargon) + real-audio mix 0.20 avec augmentation **alignée**. Cibles :
+g6pz CER < 12 % sans régresser le gate.
 
-Levenshtein + ITU regex sur la sortie greedy pour corriger les
-callsigns *presque-justes*. Coût ~3-4 h. Risque faux positifs. Gain
-potentiel sur ragchew2, invisible sur LCWO v1 propre.
+**Coût** : 2 jours data + 1 jour training. **Risque** : modéré (on a
+maintenant les bons outils pour mesurer).
 
-**Avec le release gate** : l'ajout doit produire un net positif
-sur la catégorie `callsign_lcwo_001` (baseline 1.13 %, seuil 1.63 %)
-sans dégrader les 6 autres catégories prose / contest / silence /
-word-gaps.
+### Option D — Phase 7 alternatif
+
+Inchangé. Post-process callsign (Levenshtein vs ITU prefix). Peut
+empiler par-dessus le word splitter pour les ragchews.
 
 ### Option E — Phase 8 scale-up
 
-d=192/256, training plus long. Phase 3-scale avait montré que doubler
-à data constante ne bouge rien — sans Option C d'abord, ça reproduit
-le plateau plus lentement.
-
-**Avec les P0 fermés** : on saura mesurer honnêtement, donc un E sans
-C est moins risqué qu'avant (le run produit au moins un signal réel,
-même si on s'attend à un plateau).
+Inchangé. Sans Option C d'abord, va reproduire le plateau.
 
 ### Option F — switch d'architecture
 
-wav2vec / Conformer plus moderne / whisper custom decoder. Coût 1-2
-mois. Risque très élevé. À ne considérer que si Options C + E sont
-faites et plafond toujours là.
+Inchangé. Wav2Vec / Conformer plus moderne / whisper. 1-2 mois.
 
 ---
 
 ## §4. Anti-recommandations
 
-- **Ne pas re-tenter** : Phase 5.x bump-and-amputate sur PHASE_3_4_MIX
-  (5 échecs), Phase 7 beam dans sa forme actuelle (diversity collapse
-  documenté), n'importe quel curriculum letter-groups densifié.
-- **Ne pas re-proposer Option B** (packaging) — c'est fait.
-- **Ne pas ship un acoustic candidate sans `release_gate` PASS.** C'est
-  maintenant le critère unique de décision (cf
-  `project_release_gate_v1`). Pas de "live test then ship" sans pass
-  du gate.
-- **Ne pas étendre `release_gate_v1.json` discrètement** : tout
-  changement de baseline ou de catégorie doit incrémenter la version
-  (v2.json) et expliquer le mouvement de seuils dans le commit.
+- **Ne pas relancer un retrain real-audio sur le corpus actuel sans
+  forced alignment.** Quatre échecs consécutifs (Phase 8/8a/9/10) le
+  confirment. Le data augmentation par interpolation linéaire backfire.
+- **Ne pas ship Phase 8 / 9 / 10 weights.** Tous FAIL le gate par
+  régression structurelle sur `word_gap_inflation_6×`. Phase 5.5 reste.
+- **Ne pas désactiver le post-process word splitter sur le preset
+  `prose`** sans benchmark. Gain réel mesuré sur g3ses (-1 pp WER) et
+  g6pz (-1.4 pp WER).
+- **Ne pas étendre `release_gate_v1.json` pour relaxer `word_gap_inflation_6×`**
+  sans une raison documentée — c'est exactement le test qui a attrapé
+  les 4 retrains ratés.
 
 ---
 
 ## §5. Pointers
 
 - Release gate : `python -m eval.release_gate --acoustic rnnt_phase5_5`
-- Manifest : `eval/release_gate_v1.json`
-- Bench LCWO standalone : `python -m eval.bench_lcwo --models rnnt_phase5_5 --presets live`
-- Bench callsign : `eval/bench_lcwo.py` clip 7 (callsign_lcwo_001)
-- Bench latency : `python -m eval.bench_latency`
-- Rapport de dette : `reports/technical_debt_2026-05-18.html` (mis à
-  jour 2026-05-19 pour marquer les P0 résolus)
-- Tags : `git tag --list 'v*' | tail -5`
-- Memory clés : `project_release_gate_v1`, `project_phase7_failure`,
-  `project_v0_6_2_release`, `project_bench_lcwo_v1`,
-  `project_phase4_0b_result` (bug d'origine, désormais fixé)
+- Audit real OTA : `python -m scripts.audit_real_qso --device cuda`
+  (avec `--post-segment` pour A/B le splitter)
+- Decode prose avec splitter (auto) : `morseformer decode file.wav --preset prose`
+- Decode live sans splitter : `morseformer decode file.wav --no-post-segment`
+- Real-audio prep : `python -m scripts.prepare_real_qso --device cuda`
+- Phase 9 curriculum dispo : `--curriculum phase9` dans `train_rnnt`
+- Phase 10 augmentation : `--real-audio-word-gap-augment-prob 0.5`
+- Word splitter dict : `morseformer/decoding/word_splitter.py` — ajouter
+  un mot = ajouter à `_AMATEUR_HIGH` ou `_ENGLISH_COMMON`
+- Memory clés : `project_audit_real_qso_2026_05_19`,
+  `project_phase8_to_10_results`, `project_release_gate_v1`,
+  `project_v0_6_2_release`
