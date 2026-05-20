@@ -170,7 +170,8 @@ a small real-audio fine-tune mixed in for the v0.5+ line:
   random characters, multilingual prose, and French prose with `É`, `À`, and
   apostrophe preserved.
 - **Waveform renderer**: parametric operator model, Morse keying, and HF
-  channel simulation in `morse_synth/`.
+  channel simulation in `morse_synth/`. Usage is documented in
+  [morse_synth/README.md](morse_synth/README.md).
 - **Channel**: AWGN, QSB, QRN, carrier jitter, carrier drift, receiver
   bandpass, and QRM.
 - **Operator timing**: widened element/gap jitter, dash:dot ratio variation,
