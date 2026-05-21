@@ -146,6 +146,40 @@ def test_structural_isolates_end_of_message_markers() -> None:
     assert "\n\n" in out
 
 
+def test_structural_handles_ee_as_end_marker() -> None:
+    out = structural_normalise("PSE QRA EE DE F4HYY")
+    # EE recognised as a tired-operator stand-in for K.
+    assert "EE" in out and "\n" in out
+
+
+def test_structural_aerates_punctuation_glued_to_letters() -> None:
+    assert "QRL? G3" in structural_normalise("QRL?G3SES DE F4HYY")
+    assert "PARIS, FRANCE" in structural_normalise("PARIS,FRANCE")
+
+
+def test_structural_detaches_de_in_both_directions() -> None:
+    # Prefix DE+callsign-suffix (already covered).
+    assert "DE F4HYY" in structural_normalise("DEF4HYY K")
+    # Suffix-letter+DE (YDE → Y DE) — the case seen on the audit.
+    assert "Y DE" in structural_normalise("F4HYY YDE G3SES")
+
+
+def test_structural_reconstructs_spaced_callsigns() -> None:
+    # The exact pattern seen on g3ses C7 (model emits each char
+    # separated when the inter-char gap is unusually long).
+    assert "F4HYY" in structural_normalise("F 4 H Y Y")
+    assert "G3SES" in structural_normalise("G 3 S E S")
+    # 2-letter prefix variant.
+    assert "MM0XYZ" in structural_normalise("MM 0 X Y Z")
+    # Portable suffix preserved.
+    assert "F4HYY/P" in structural_normalise("F 4 H Y Y /P")
+    # Prefix-glued-to-digit variant — also from g3ses C7 ("F4 H Y Y").
+    assert "F4HYY" in structural_normalise("F4 H Y Y")
+    assert "G3SES" in structural_normalise("G3 S E S")
+    # Already-correct callsigns are NOT touched.
+    assert structural_normalise("F4HYY DE G3SES").startswith("F4HYY DE G3SES")
+
+
 # --------------------------------------------------------------------- #
 # apply — full pipeline
 # --------------------------------------------------------------------- #

@@ -194,26 +194,68 @@ def is_callsign(token: str) -> bool:
 #
 # Splits the obvious structural glue without consulting the dictionary.
 
-_DE_GLUED_RE = re.compile(r"\bDE([A-Z0-9]{3,})\b")
+# DE glued to its callsign suffix (DEF4HYY → DE F4HYY) OR its
+# preceding letter/digit (YDE → Y DE). Both directions seen in the
+# 2026-05-19 audit on g3ses + g6pz.
+_DE_SUFFIX_RE = re.compile(r"\bDE([A-Z0-9]{3,})\b")
+_DE_PREFIX_RE = re.compile(r"\b([A-Z0-9]{1,3})DE\b")
 _BT_PROSIGN_RE = re.compile(r"\s*[+=]\s*")
-_END_TX_RE = re.compile(r"\s+(K|KN|SK)(?=\s|$)")
+# End-of-transmission markers, including EE (sometimes sent in
+# place of K by tired operators).
+_END_TX_RE = re.compile(r"\s+(K|KN|SK|EE)(?=\s|$)")
+# Punctuation aeration — separate ? , . + from an immediately
+# following letter / digit so the splitter sees clean tokens.
+# ``/`` is deliberately excluded — it is the standard portable
+# suffix separator (F4HYY/P, MM0XYZ/M) where we MUST NOT add a
+# space.
+_PUNCT_AERATE_RE = re.compile(r"([?,.+])([A-Z0-9])")
+# Spaced-callsign reconstruction. Real CW transcripts sometimes look
+# like ``F 4 H Y Y`` (fully spaced) or ``F4 H Y Y`` (prefix glued to
+# its digit) because the model emits per-character spaces when the
+# inter-character gap is unusually long. ``\s*`` between prefix and
+# digit allows the partially-glued form; ``\s+`` between the digit
+# and each suffix letter requires at least one separator there so
+# already-correct callsigns like ``F4HYY`` are not re-touched.
+_SPACED_CALLSIGN_RE = re.compile(
+    r"\b([A-Z]{1,2})\s*(\d)((?:\s+[A-Z]){1,4})(?:\s*(/[A-Z0-9]{1,4}))?\b"
+)
 _WS_RE = re.compile(r"[ \t]{2,}")
 
 
+def _join_spaced_callsign(match: re.Match) -> str:
+    prefix = match.group(1)
+    digit = match.group(2)
+    suffix_raw = match.group(3)
+    portable = match.group(4) or ""
+    suffix = "".join(suffix_raw.split())
+    return f"{prefix}{digit}{suffix}{portable}"
+
+
 def structural_normalise(text: str) -> str:
-    """Apply the user-provided structural-clean regex pre-pass."""
+    """Apply the structural-clean regex pre-pass.
+
+    Order matters: spaced-callsign reconstruction runs before
+    punctuation aeration so a callsign followed by ``?`` is glued
+    first and then aerated; DE-detachment runs before BT-prosign
+    normalisation so ``F4HYYDE`` does not eat the following ``=``.
+    """
     text = text.strip()
-    # 1. DE glued to a callsign (DEF4HYY → DE F4HYY).
-    text = _DE_GLUED_RE.sub(r"DE \1", text)
-    # 2. Normalise BT prosign with surrounding whitespace + line break.
+    # 1. Spaced-callsign reconstruction (F 4 H Y Y → F4HYY).
+    text = _SPACED_CALLSIGN_RE.sub(_join_spaced_callsign, text)
+    # 2. DE detached from its callsign neighbour, both directions.
+    text = _DE_SUFFIX_RE.sub(r"DE \1", text)
+    text = _DE_PREFIX_RE.sub(r"\1 DE", text)
+    # 3. Aerate punctuation glued to a letter/digit.
+    text = _PUNCT_AERATE_RE.sub(r"\1 \2", text)
+    # 4. Normalise BT prosign with surrounding whitespace + line break.
     text = _BT_PROSIGN_RE.sub(" = \n", text)
-    # 3. Isolate end-of-transmission markers — keep leading space and
+    # 5. Isolate end-of-transmission markers — keep leading space and
     # add a blank line after. The trailing context (\s|$) lets a
     # message-final marker still get the treatment.
     text = _END_TX_RE.sub(r" \1 \n\n", text)
-    # 4. Collapse runs of horizontal whitespace (newlines preserved).
+    # 6. Collapse runs of horizontal whitespace (newlines preserved).
     text = _WS_RE.sub(" ", text)
-    # 5. Strip leading + trailing whitespace from each line — leading
+    # 7. Strip leading + trailing whitespace from each line — leading
     # spaces appear when the structural pre-pass injects a newline
     # right before a space-separated continuation.
     text = "\n".join(line.strip() for line in text.splitlines())

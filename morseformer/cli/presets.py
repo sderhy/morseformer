@@ -60,15 +60,19 @@ PRESETS: dict[str, Preset] = {
     ),
     "prose": Preset(
         name="prose",
-        description="Offline file decode with LM shallow fusion (λ=0.7) "
-                    "and dictionary-based word splitter on the output "
-                    "(re-segments run-on amateur words). Best for poetry "
-                    "/ ragchew / book reading from a recorded .wav.",
+        description="Offline file decode with the dictionary-based word "
+                    "splitter on the output (re-segments run-on amateur "
+                    "words + restructures by transmission boundaries). "
+                    "Best for ragchew / file decode where readability "
+                    "matters. LM fusion is now off by default — it was "
+                    "trained on literary prose and consistently hurts "
+                    "amateur jargon (see project_streaming_fusion_failed "
+                    "+ post-2026-05-21 live test on g3ses C7).",
         acoustic="rnnt_phase5_5",
         confidence_threshold=0.6,
         digit_threshold=0.90,
-        lm="lm_phase5_2",
-        fusion_weight=0.7,
+        lm=None,
+        fusion_weight=0.0,
         post_segment=True,
     ),
     "contest": Preset(
