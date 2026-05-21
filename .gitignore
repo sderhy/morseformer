@@ -35,6 +35,10 @@ data/real/
 *.ogg
 # Phase 3.3 multilingual prose corpus (regenerable via data/corpus/fetch.py)
 data/corpus/prose.txt
+# Per-run release-gate JSON snapshots (tied to local checkpoints, not
+# part of the repo history). The dated technical-debt HTML in reports/
+# remains tracked.
+reports/release_gate_*.json
 
 # Phase 3.5+ FAV22-decoded artefacts (regenerable via scripts/decode_fav22.py
 # + scripts/align_fav22.py from a recorded fav22*.wav). The reference

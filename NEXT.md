@@ -1,123 +1,107 @@
-# NEXT — handoff post-Phase 8-10 + word-splitter (2026-05-21)
+# NEXT — handoff post 2026-05-21
 
 ## §1. État actuel
 
-**Version recommandée : v0.6.3 (acoustic `rnnt_phase5_5`).** Inchangé.
-Cwget-parity live-validée. Tous les outils du gate v1 passent (+ le
-nouveau post-process word splitter activé sur le preset `prose`).
+**Acoustic shippé : `rnnt_phase5_5` (v0.6.3) inchangé.** Quatre retrains
+real-audio (Phase 8 / 8a / 9 / 10) ont tous FAIL le gate par régression
+structurelle word_gap_inflation. Détails dans
+`memory/project_phase8_to_10_results.md`.
 
-### Bilan de la session 2026-05-19 → 2026-05-21
+**Inférence améliorée cette session** (commits `bd1045c` → `714eec0`) :
 
-| Travail | Statut | Commit |
+| Domaine | Changement | Commit |
 |---|---|---|
-| Audit real-QSO `g3ses` + `g6pz` (28 clips ~30 min) | gap 8× confirmé | `edf2ae1` |
-| Real-audio prep pipeline | 159 + 102 chunks alignés, score ~0.78 | `0e45f9e` |
-| Phase 8 fine-tune | FAIL gate (5/10) | non shippé |
-| Phase 8a recipe-conservative | FAIL gate (5/10) | non shippé |
-| Phase 9 jargon enrichment + word_gap floor | FAIL gate (6/10) — closest | code shippé, weights non |
-| Phase 10 real-audio word_gap augmentation | FAIL gate (2/10) — backfired | code shippé, weights non |
-| **Post-process word splitter** | **shippé ON sur preset `prose`** | `6c0a5c6` |
+| P0-A dette | `ValidationConfig.matching()` propage 18 champs audio | `bd1045c` |
+| P0-B dette | `python -m eval.release_gate` (10 catégories, exit 0/1) | `92a6596` |
+| Display | `format_output` ajoute `\n` après `=` / `KN` | `edf2ae1` |
+| Real data | `prepare_real_qso.py` (resample + decode + align JSONL) | `0e45f9e` |
+| Jargon + infra | Phase 9 templates + Phase 10 augmentation knobs (OFF default) | `6c0a5c6` |
+| **Word splitter** | `morseformer/decoding/word_splitter.py` (~330 lignes, 22 tests) | `6c0a5c6` |
+| **Preset `prose`** | switch no-LM + splitter ON par défaut (LM hurts ragchew) | `714eec0` |
+| Structural rules | DE both directions + EE + punctuation aération + callsign reconstruction | `714eec0` |
 
-### Verdict
-
-**Le fine-tune real-audio naïf sur 30 min ne marche pas.** La régression
-structurelle sur `word_gap_inflation_6×` (1.5 % → 9-14 %) vient du
-mismatch de distribution : real audio = word gaps ~1×, synth = U(1,8).
-Le modèle collapse vers la moyenne et perd la queue 6×. Tentatives de
-fix (jargon, augmentation par insertion silence) n'ont pas suffi —
-sans **forced alignment** du corpus real, l'augmentation injecte du
-silence à des positions ~aléatoires et empire le problème.
-
-**Phase 5.5 reste recommandé.** Le commit `6c0a5c6` ship en parallèle :
-
-1. **Jargon templates Phase 9** (text.py) — pour toute future Phase 11+
-   sans real-audio mix
-2. **Real-audio augmentation infra** (real_audio.py) — OFF par défaut,
-   disponible pour expérimentation
-3. **Word splitter post-process** (decoding/word_splitter.py + preset
-   integration) — gain -1 à -1.4 pp WER sur g3ses/g6pz held-out
+**Tests** : 22 word_splitter + 28 validation + 4 release_gate + 8 postprocess
++ existants ⇒ ~410 passed. Ruff clean.
 
 ---
 
-## §2. Plan d'attaque immédiat — aucun
+## §2. Prochaine session — direction décidée : interfaces de décodage
 
-Le projet est dans un état stable. Le gate passe, la dette technique
-est traitée, le post-process apporte un gain modeste mais réel sur
-ragchew. Pas de chantier bloquant.
+Le modèle est stable, le bench est outillé, le post-process ship. La
+prochaine itération porte sur **l'UX du décodeur**. Voir
+`memory/handoff_post_2026_05_21.md` pour la map des threads.
+
+### Threads candidats (à ordonner par le user)
+
+1. **Cohérence preset across surfaces** — le preset `prose` (no-LM
+   + splitter) est-il propagé dans GUI et Gradio ?
+2. **Toggle `--post-segment` en GUI/Gradio** — flag CLI shippé,
+   à porter côté UX
+3. **Live decode UX** — séparateurs visuels pour `=` / `KN` dans
+   le streaming, formatage par transmission
+4. **Batch mode CLI** — `morseformer decode dir/*.wav` ou flag
+5. **JSON output** — `--format json` pour pipelines downstream
+6. **HTTP/REST serveur** — `morseformer serve` exposant decode en endpoint
+7. **Standalone Windows package** — PyInstaller bundle
+8. **Live transcription markers** — coloration / annotations dans la GUI
+
+### Points d'entrée code
+- CLI dispatch : `morseformer/cli/__init__.py`
+- Presets (truth source) : `morseformer/cli/presets.py`
+- GUI : `morseformer/gui/app.py` + `live_tab.py` + `file_tab.py`
+- Gradio HF Space : `demo/app.py`
+- Streaming decoder API : `morseformer/decoding/streaming.py`
+- Audio capture : `morseformer/gui/audio_capture.py` (PulseAudio + ALSA)
 
 ---
 
-## §3. Options en aval
+## §3. Options modèle en aval (inchangées, en attente)
 
-### Option A — plateau (recommandation)
+### Option A — plateau (recommandation par défaut)
 
-Accepter `v0.6.3 + word splitter ON pour prose` comme version finale.
+`v0.6.3` + word splitter ON pour prose = version finale.
 
 ### Option B — packaging / UX
 
-DONE en v0.6.3. RAS.
+Couverte par §2 ci-dessus pour cette prochaine session.
 
 ### Option C — collecte data + forced alignment
 
-Si on veut un *vrai* Phase 11, deux conditions préalables :
+Pour un VRAI Phase 11 retrain, deux pré-requis non remplis :
+1. ≥ 2 h de corpus real multi-opérateurs, OU
+2. **Forced alignment** sur le corpus existant (CTC alignment via
+   `torchaudio.functional.forced_align`) → unlock vraie data
+   augmentation word-gap
 
-1. **Plus de corpus real** : ≥ 2 h d'audio multi-opérateurs / multi-
-   bandes avec transcripts time-aligned, OU
-2. **Forced alignment** sur le corpus existant : CTC alignment pour
-   identifier les positions exactes de chaque caractère dans l'audio
-   → enable une vraie data augmentation word-gap. ~1-2 jours d'engineering
-   (utiliser `torchaudio.functional.forced_align` ou similaire).
+### Options D / E / F
 
-Avec l'une des deux, Phase 11 peut envisager : `DatasetConfig.phase_9`
-(jargon) + real-audio mix 0.20 avec augmentation **alignée**. Cibles :
-g6pz CER < 12 % sans régresser le gate.
-
-**Coût** : 2 jours data + 1 jour training. **Risque** : modéré (on a
-maintenant les bons outils pour mesurer).
-
-### Option D — Phase 7 alternatif
-
-Inchangé. Post-process callsign (Levenshtein vs ITU prefix). Peut
-empiler par-dessus le word splitter pour les ragchews.
-
-### Option E — Phase 8 scale-up
-
-Inchangé. Sans Option C d'abord, va reproduire le plateau.
-
-### Option F — switch d'architecture
-
-Inchangé. Wav2Vec / Conformer plus moderne / whisper. 1-2 mois.
+Inchangées (post-process callsign, scale-up, switch d'architecture).
 
 ---
 
 ## §4. Anti-recommandations
 
-- **Ne pas relancer un retrain real-audio sur le corpus actuel sans
-  forced alignment.** Quatre échecs consécutifs (Phase 8/8a/9/10) le
-  confirment. Le data augmentation par interpolation linéaire backfire.
-- **Ne pas ship Phase 8 / 9 / 10 weights.** Tous FAIL le gate par
-  régression structurelle sur `word_gap_inflation_6×`. Phase 5.5 reste.
-- **Ne pas désactiver le post-process word splitter sur le preset
-  `prose`** sans benchmark. Gain réel mesuré sur g3ses (-1 pp WER) et
-  g6pz (-1.4 pp WER).
-- **Ne pas étendre `release_gate_v1.json` pour relaxer `word_gap_inflation_6×`**
-  sans une raison documentée — c'est exactement le test qui a attrapé
-  les 4 retrains ratés.
+- Ne pas relancer de retrain real-audio sans forced alignment
+  (4 échecs Phase 8 / 8a / 9 / 10 le confirment)
+- Ne pas ship Phase 8 / 9 / 10 weights (tous FAIL gate)
+- Ne pas re-introduire LM dans `prose` default sans test live qui
+  démontre un gain net (le LM hurts ragchew confirmé sur g6pz/G1
+  + g3ses/C7)
+- Ne pas désactiver le splitter sur preset `prose` par défaut sans
+  alternative readability équivalente
+- Ne pas ship d'interface (GUI/Gradio/web) qui n'expose pas un
+  équivalent du flag `--post-segment` côté UX
 
 ---
 
 ## §5. Pointers
 
-- Release gate : `python -m eval.release_gate --acoustic rnnt_phase5_5`
-- Audit real OTA : `python -m scripts.audit_real_qso --device cuda`
-  (avec `--post-segment` pour A/B le splitter)
-- Decode prose avec splitter (auto) : `morseformer decode file.wav --preset prose`
-- Decode live sans splitter : `morseformer decode file.wav --no-post-segment`
-- Real-audio prep : `python -m scripts.prepare_real_qso --device cuda`
-- Phase 9 curriculum dispo : `--curriculum phase9` dans `train_rnnt`
-- Phase 10 augmentation : `--real-audio-word-gap-augment-prob 0.5`
-- Word splitter dict : `morseformer/decoding/word_splitter.py` — ajouter
-  un mot = ajouter à `_AMATEUR_HIGH` ou `_ENGLISH_COMMON`
-- Memory clés : `project_audit_real_qso_2026_05_19`,
-  `project_phase8_to_10_results`, `project_release_gate_v1`,
-  `project_v0_6_2_release`
+- Release gate : `python -m eval.release_gate --device cuda`
+- Audit real OTA : `python -m scripts.audit_real_qso --device cuda --post-segment`
+- Decode ragchew (lisible) : `morseformer decode file.wav --preset prose`
+- Decode literary prose (LM opt-in) : `morseformer decode file.wav --preset prose --lm lm_phase5_2 --fusion-weight 0.7`
+- Word splitter dict : `morseformer/decoding/word_splitter.py` —
+  ajouter un mot = ajouter à `_AMATEUR_HIGH` ou `_ENGLISH_COMMON`
+- Tags : `git tag --list 'v*' | tail -5`
+- Memory clés : `handoff_post_2026_05_21`, `project_phase8_to_10_results`,
+  `project_release_gate_v1`, `project_audit_real_qso_2026_05_19`
