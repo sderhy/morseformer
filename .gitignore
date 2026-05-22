@@ -53,6 +53,8 @@ wandb/
 lightning_logs/
 logs/
 *.log
+# Scratch outputs (sanity dumps, ad-hoc benches, etc.)
+out/
 
 # IDE / OS
 .idea/

@@ -13,12 +13,14 @@ A preset bundles the four user-facing knobs that matter at inference:
 
 Preset choice rationale:
 
-- ``live`` (default): v0.5.3 streaming defaults on top of the **v0.6.2
-  acoustic** (Phase 5.5, reverted from 5.8 after bench LCWO v1).
-  Threshold 0.6 + digit-threshold 0.90 cure the 5.1/5.2 live FP modes;
-  the 5.5 acoustic was originally tuned with these same thresholds.
-- ``prose``: same acoustic + LM fusion λ=0.7 for offline file decoding
-  on prose audio (Alice gain −11.4 % CER on n=120).
+- ``live`` (default): v0.5.3 streaming defaults on top of the
+  **v0.6.4 acoustic** (rnnt_phase11b — forced-alignment-aware real-
+  audio retrain from phase5_5/best, -34 % real-OTA mean CER vs 5.5).
+  Threshold 0.6 + digit-threshold 0.90 cure the 5.1/5.2 live FP modes.
+- ``prose``: same acoustic + dictionary splitter + amateur char
+  n-gram LM rescoring (lm_amateur_3gram, Phase 11 §C) for offline
+  file decoding. The neural prose LM (lm_phase5_2) was dropped at
+  v0.6.3 because it hurt amateur jargon on literary prose.
 - ``contest``: relaxed thresholds for fast contest-style exchanges
   where missing a character is worse than emitting one wrongly.
 - ``conservative``: tightened thresholds for very noisy bands where
@@ -52,7 +54,7 @@ PRESETS: dict[str, Preset] = {
         name="live",
         description="v0.5.3 streaming defaults. Best for IC-7300 + receiver "
                     "real-time decode.",
-        acoustic="rnnt_phase5_5",
+        acoustic="rnnt_phase11b",
         confidence_threshold=0.6,
         digit_threshold=0.90,
         lm=None,
@@ -68,7 +70,7 @@ PRESETS: dict[str, Preset] = {
                     "trained on literary prose and consistently hurts "
                     "amateur jargon (see project_streaming_fusion_failed "
                     "+ post-2026-05-21 live test on g3ses C7).",
-        acoustic="rnnt_phase5_5",
+        acoustic="rnnt_phase11b",
         confidence_threshold=0.6,
         digit_threshold=0.90,
         lm=None,
@@ -79,7 +81,7 @@ PRESETS: dict[str, Preset] = {
         name="contest",
         description="Looser thresholds for fast contest exchanges where "
                     "missing characters costs more than rare false positives.",
-        acoustic="rnnt_phase5_5",
+        acoustic="rnnt_phase11b",
         confidence_threshold=0.5,
         digit_threshold=0.80,
         lm=None,
@@ -89,7 +91,7 @@ PRESETS: dict[str, Preset] = {
         name="conservative",
         description="Tightened thresholds for very noisy bands. Prefers "
                     "silence to a guess.",
-        acoustic="rnnt_phase5_5",
+        acoustic="rnnt_phase11b",
         confidence_threshold=0.75,
         digit_threshold=0.95,
         lm=None,

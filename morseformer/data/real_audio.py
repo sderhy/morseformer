@@ -37,7 +37,7 @@ import torch
 from scipy.io import wavfile
 from torch.utils.data import IterableDataset
 
-from morseformer.core.tokenizer import encode
+from morseformer.core.tokenizer import SPACE_INDEX, encode
 from morseformer.data.synthetic import _pad_or_truncate, _worker_seed
 from morseformer.features import FrontendConfig, extract_features
 
@@ -165,19 +165,23 @@ class RealAudioCWDataset(IterableDataset):
             end = int(round(float(rec["end_s"]) * self.cfg.sample_rate))
             audio = audio_full[start:end].astype(np.float32, copy=True)
             label = rec["label"]
+            tokens_override: list[int] | None = None
             if (
                 self.cfg.word_gap_augment_prob > 0.0
                 and rng.random() < self.cfg.word_gap_augment_prob
             ):
-                audio = _augment_word_gap(
+                audio, tokens_override = _augment_word_gap(
                     audio, label,
                     sample_rate=self.cfg.sample_rate,
                     rng=rng,
                     inflation_range=self.cfg.word_gap_augment_inflation_range,
+                    tokens=rec.get("tokens"),
+                    char_starts_s=rec.get("char_starts_s"),
+                    target_samples=target_samples,
                 )
             audio = _pad_or_truncate(audio, target_samples)
             features = extract_features(audio, self.cfg.sample_rate, self.cfg.frontend)
-            tokens = encode(label)
+            tokens = tokens_override if tokens_override is not None else encode(label)
             yield {
                 "features": torch.from_numpy(features),
                 "tokens": torch.tensor(tokens, dtype=torch.int64),
@@ -194,41 +198,103 @@ def _augment_word_gap(
     rng: np.random.Generator,
     inflation_range: tuple[float, float],
     nominal_gap_s: float = 0.4,
-) -> np.ndarray:
+    tokens: list[int] | None = None,
+    char_starts_s: list[float] | None = None,
+    target_samples: int | None = None,
+) -> tuple[np.ndarray, list[int] | None]:
     """Insert an inflated silent gap at one random word boundary of
-    ``audio``. Returns a new array; caller is responsible for
-    pad/truncate to the target window.
+    ``audio``. Returns ``(augmented_audio, tokens_to_use)`` where
+    ``tokens_to_use`` reflects any label trimming triggered by audio
+    truncation.
 
-    The word boundary is picked from the literal SPACE positions of
-    ``label``; the audio time corresponding to that boundary is
-    estimated by linear interpolation (uniform-speed assumption — the
-    aligned chunks are short enough, ~6 s, that this is a reasonable
-    approximation). The inflation factor is sampled per call from
-    ``inflation_range`` and multiplied by ``nominal_gap_s`` (one
-    word-gap-equivalent at ~20 WPM by default).
+    When ``tokens`` and ``char_starts_s`` are provided (forced-aligned
+    JSONLs from ``scripts/force_align_real_qso.py``), the insertion
+    point is chosen *inside the true inter-word silence*: midway
+    between the SPACE token's onset and the next character's onset.
 
-    Phase 10 motivation: the un-augmented real-audio stream has
-    word gaps that hover around 1× (normal operator timing), while the
-    synthetic stream uses ``operator_word_gap_inflation_range`` up to
-    8×. The two distributions are contradictory and the model
-    collapses toward the narrow end (cf the +7.9 pp regression on
-    ``word_gap_inflation_6x`` measured for Phase 8 / 8a / 9). With
-    this augmentation, the real stream also exposes the inflated
-    end so the model retains the Phase-5.5 word-gap robustness while
-    still benefiting from real-operator acoustic cues.
+    When ``target_samples`` is provided AND alignment data is
+    available, audio that exceeds the target after insertion is
+    truncated AND the tokens whose audio start falls beyond the
+    truncation point are dropped from the returned token list. This
+    fix (Phase 11b) closes the silence_fp regression observed in
+    Phase 11 — the previous version returned the longer audio and
+    relied on the dataset's ``_pad_or_truncate`` to silently cut the
+    tail, leaving the label referring to content that no longer
+    existed in the audio. The model would learn "sometimes silence
+    contains content" and hallucinate on noise-only inputs.
+
+    Without alignment data, the linear-interp fallback runs (legacy
+    Phase 10 path) and returns ``tokens=None`` so the caller knows to
+    use ``encode(label)`` directly. The fallback retains the
+    truncation bug — only the alignment-aware path is safe.
+
+    The inflation factor is sampled per call from ``inflation_range``
+    and multiplied by ``nominal_gap_s`` (one word-gap-equivalent at
+    ~20 WPM by default).
     """
-    if " " not in label or len(audio) == 0:
-        return audio
+    if len(audio) == 0:
+        return audio, tokens
+    inflation = float(rng.uniform(*inflation_range))
+    gap_samples = int(round(inflation * nominal_gap_s * sample_rate))
+    if gap_samples <= 0:
+        return audio, tokens
+    silence = np.zeros(gap_samples, dtype=audio.dtype)
+
+    # Phase 11 path: choose a boundary using true forced-alignment.
+    if tokens is not None and char_starts_s is not None:
+        space_idxs = [i for i, tok in enumerate(tokens) if tok == SPACE_INDEX]
+        if not space_idxs:
+            return audio, tokens
+        i = int(rng.integers(0, len(space_idxs)))
+        sp = space_idxs[i]
+        space_t = float(char_starts_s[sp])
+        # Insert in the middle of the actual silence: between the
+        # SPACE token's onset and the next character's onset.
+        if sp + 1 < len(char_starts_s):
+            next_t = float(char_starts_s[sp + 1])
+            pos_s = 0.5 * (space_t + next_t)
+        else:
+            pos_s = space_t
+        audio_pos = int(round(pos_s * sample_rate))
+        audio_pos = max(0, min(audio_pos, len(audio)))
+        new_audio = np.concatenate([audio[:audio_pos], silence, audio[audio_pos:]])
+
+        if target_samples is not None and new_audio.shape[0] > target_samples:
+            # Drop tokens whose post-insertion start time falls past
+            # the truncation horizon. char_starts_s is in *original*
+            # audio time; tokens after audio_pos shift by gap_samples.
+            insertion_t = audio_pos / sample_rate
+            gap_s = gap_samples / sample_rate
+            target_t = target_samples / sample_rate
+            kept: list[int] = []
+            for tok, t0 in zip(tokens, char_starts_s):
+                t_shifted = t0 + gap_s if t0 >= insertion_t else t0
+                if t_shifted < target_t:
+                    kept.append(tok)
+                else:
+                    break  # char_starts_s is monotonic
+            # Trim trailing SPACE — it would point to truncated audio.
+            while kept and kept[-1] == SPACE_INDEX:
+                kept.pop()
+            new_audio = new_audio[:target_samples]
+            return new_audio, kept
+
+        return new_audio, tokens
+
+    # Phase 10 fallback: linear interpolation from label SPACE
+    # positions. Returns tokens=None so the caller knows to encode
+    # ``label`` directly. The truncation bug remains in this path —
+    # use the alignment-aware path for any new datasets.
+    if " " not in label:
+        return audio, None
     boundaries = [i for i, c in enumerate(label) if c == " "]
     if not boundaries:
-        return audio
+        return audio, None
     bi = boundaries[int(rng.integers(0, len(boundaries)))]
     audio_pos = int(round(bi / len(label) * len(audio)))
     audio_pos = max(0, min(audio_pos, len(audio)))
-    inflation = float(rng.uniform(*inflation_range))
-    gap_samples = int(round(inflation * nominal_gap_s * sample_rate))
-    silence = np.zeros(gap_samples, dtype=audio.dtype)
-    return np.concatenate([audio[:audio_pos], silence, audio[audio_pos:]])
+    new_audio = np.concatenate([audio[:audio_pos], silence, audio[audio_pos:]])
+    return new_audio, None
 
 
 class MixedCWDataset(IterableDataset):

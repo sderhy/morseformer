@@ -64,9 +64,12 @@ def test_models_list_default_only_shows_recommended(capsys) -> None:
     rc = main(["models", "list"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "rnnt_phase5_5" in out
+    # rnnt_phase11b promoted to recommended at v0.6.4.
+    assert "rnnt_phase11b" in out
     assert "lm_phase5_2" in out
-    # Demoted at v0.6.2 — kept in registry but no longer recommended.
+    # Demoted at v0.6.4 — kept in registry but no longer recommended.
+    assert "rnnt_phase5_5" not in out
+    # Demoted at v0.6.2.
     assert "rnnt_phase5_8" not in out
     # Legacy 46-vocab models must be hidden by default.
     assert "rnnt_phase3_0" not in out
@@ -83,8 +86,9 @@ def test_models_list_advanced_shows_legacy(capsys) -> None:
 
 def test_known_names_recommended_only() -> None:
     rec = known_names(advanced=False)
-    assert "rnnt_phase5_5" in rec
+    assert "rnnt_phase11b" in rec
     assert "lm_phase5_2" in rec
+    assert "rnnt_phase5_5" not in rec  # demoted at v0.6.4
     assert "rnnt_phase3_0" not in rec
     assert "rnnt_phase5_7" not in rec  # demoted to legacy in v0.6.0
     assert "rnnt_phase5_8" not in rec  # demoted at v0.6.2 (bench LCWO v1)
@@ -94,8 +98,8 @@ def test_known_names_advanced_includes_all() -> None:
     assert set(known_names(advanced=True)) == set(REGISTRY)
 
 
-def test_recommended_acoustic_is_phase5_5() -> None:
-    assert RECOMMENDED_ACOUSTIC == "rnnt_phase5_5"
+def test_recommended_acoustic_is_phase11b() -> None:
+    assert RECOMMENDED_ACOUSTIC == "rnnt_phase11b"
 
 
 def test_default_preset_is_live() -> None:
@@ -106,18 +110,23 @@ def test_all_four_presets_present() -> None:
     assert set(PRESETS) == {"live", "prose", "contest", "conservative"}
 
 
-def test_live_preset_has_v0_6_2_defaults() -> None:
+def test_live_preset_has_v0_6_4_defaults() -> None:
     p = get_preset("live")
-    assert p.acoustic == "rnnt_phase5_5"
+    assert p.acoustic == "rnnt_phase11b"
     assert p.confidence_threshold == 0.6
     assert p.digit_threshold == 0.90
     assert p.lm is None
 
 
-def test_prose_preset_enables_fusion() -> None:
+def test_prose_preset_enables_post_segment_without_neural_lm() -> None:
+    """Post-714eec0: the neural prose LM (`lm_phase5_2`) was dropped
+    from the default `prose` preset because it consistently hurt
+    amateur jargon. The preset now relies on the dictionary splitter
+    (optionally backed by the char n-gram LM at runtime) instead."""
     p = get_preset("prose")
-    assert p.lm == "lm_phase5_2"
-    assert p.fusion_weight == 0.7
+    assert p.lm is None
+    assert p.fusion_weight == 0.0
+    assert p.post_segment is True
 
 
 def test_contest_preset_loosens_thresholds() -> None:

@@ -176,7 +176,44 @@ def build_parser() -> argparse.ArgumentParser:
                         "final RNN-T / CTC outputs. Re-segments amateur "
                         "run-on words (DROMCHRIS → DR OM CHRIS). Off by "
                         "default; preferred for ragchew prose.")
+    p.add_argument("--post-segment-lm", type=Path, default=None,
+                   help="Path to a char n-gram LM (Phase 11 §C, "
+                        "scripts/train_ngram_amateur.py output, "
+                        "default: checkpoints/lm_amateur_3gram.pkl). "
+                        "When set together with --post-segment, the "
+                        "splitter rescores each candidate split against "
+                        "the LM and keeps the more amateur-likely form "
+                        "— cuts false-positive splits on clean prose.")
     return p
+
+
+def _load_ngram_lm(path: Path | None):
+    """Load the optional n-gram LM for splitter rescoring.
+
+    Resolution order when ``path`` is None:
+      1. ``release/lm_amateur_3gram.pkl`` (dev-tree convention)
+      2. ``checkpoints/lm_amateur_3gram.pkl`` (training output)
+      3. HF Hub ``sderhy/morseformer:lm_amateur_3gram.pkl`` — downloaded
+         lazily on first use, then cached.
+
+    Returns None if no path resolves (e.g. offline + no local copy).
+    """
+    from morseformer.decoding.lm_ngram import CharNGramLM
+    if path is not None:
+        return CharNGramLM.load(path)
+    for candidate in (Path("release/lm_amateur_3gram.pkl"),
+                      Path("checkpoints/lm_amateur_3gram.pkl")):
+        if candidate.exists():
+            return CharNGramLM.load(candidate)
+    try:
+        from huggingface_hub import hf_hub_download
+        cached = hf_hub_download(
+            repo_id="sderhy/morseformer",
+            filename="lm_amateur_3gram.pkl",
+        )
+        return CharNGramLM.load(Path(cached))
+    except Exception:
+        return None
 
 
 def _auto_device() -> str:
@@ -357,14 +394,16 @@ def main(argv: list[str] | None = None) -> int:
             rnnt_hyp = format_output(" ".join(p for p in rnnt_parts if p))
         if args.post_segment:
             from morseformer.decoding.word_splitter import apply as ws_apply
-            ctc_hyp = ws_apply(ctc_hyp)
-            rnnt_hyp = ws_apply(rnnt_hyp)
+            seg_lm = _load_ngram_lm(args.post_segment_lm)
+            ctc_hyp = ws_apply(ctc_hyp, lm=seg_lm)
+            rnnt_hyp = ws_apply(rnnt_hyp, lm=seg_lm)
         print(f"\nCTC  : {ctc_hyp!r}")
         print(f"RNN-T: {rnnt_hyp!r}")
     else:
         if args.post_segment:
             from morseformer.decoding.word_splitter import apply as ws_apply
-            ctc_hyp = ws_apply(ctc_hyp)
+            seg_lm = _load_ngram_lm(args.post_segment_lm)
+            ctc_hyp = ws_apply(ctc_hyp, lm=seg_lm)
         print(f"\nCTC  : {ctc_hyp!r}")
 
     return 0

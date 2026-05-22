@@ -38,6 +38,12 @@ def add_decode_parser(sub: argparse._SubParsersAction) -> None:
                      action="store_false",
                      help="Disable the post-segmentation word splitter "
                           "even when the preset enables it.")
+    p.add_argument("--post-segment-lm", type=Path, default=None,
+                   help="Path to a char n-gram LM "
+                        "(scripts/train_ngram_amateur.py output, default: "
+                        "checkpoints/lm_amateur_3gram.pkl if present). "
+                        "Rescues clean-prose tokens that the dictionary "
+                        "splitter would otherwise over-split.")
 
 
 def run_decode(args: argparse.Namespace) -> int:
@@ -78,6 +84,8 @@ def run_decode(args: argparse.Namespace) -> int:
     )
     if post_segment:
         forwarded += ["--post-segment"]
+    if args.post_segment_lm is not None:
+        forwarded += ["--post-segment-lm", str(args.post_segment_lm)]
 
     # Local import so that `morseformer --help` does not pull torch.
     from scripts.decode_audio import main as decode_main

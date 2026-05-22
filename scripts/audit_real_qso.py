@@ -103,6 +103,12 @@ def main(argv: list[str] | None = None) -> int:
              "operators collapse inter-word gaps to zero "
              "(DROMCHRIS → DR OM CHRIS, MYWXIS → MY WX IS).",
     )
+    p.add_argument(
+        "--post-segment-lm", type=Path, default=None,
+        help="Path to a char n-gram LM (Phase 11 §C) for splitter "
+             "rescoring. Defaults to checkpoints/lm_amateur_3gram.pkl "
+             "when present.",
+    )
     args = p.parse_args(argv)
 
     root = args.root
@@ -129,6 +135,15 @@ def main(argv: list[str] | None = None) -> int:
         fusion_weight = preset.fusion_weight
         print(f"[audit] LM={preset.lm} fusion_weight={fusion_weight}")
 
+    seg_lm = None
+    if args.post_segment:
+        from morseformer.decoding.lm_ngram import CharNGramLM
+        seg_lm_path = args.post_segment_lm or Path(
+            "checkpoints/lm_amateur_3gram.pkl"
+        )
+        if seg_lm_path.exists():
+            seg_lm = CharNGramLM.load(seg_lm_path)
+            print(f"[audit] splitter LM: {seg_lm_path}")
     decoder = make_morseformer_decoder(
         acoustic, device=device,
         confidence_threshold=preset.confidence_threshold,
@@ -136,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         lm=lm, fusion_weight=fusion_weight,
         sample_rate=_SAMPLE_RATE, carrier_hz=_CARRIER_HZ,
         post_segment=args.post_segment,
+        post_segment_lm=seg_lm,
     )
 
     per_clip: list[dict] = []

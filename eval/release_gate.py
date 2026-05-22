@@ -417,6 +417,7 @@ def run_gate(
     lm_name: str | None,
     bench_manifest_path: Path,
     device: torch.device,
+    acoustic_ckpt_path: Path | None = None,
 ) -> tuple[list[CategoryResult], dict[str, Any]]:
     # Only load the bench-clip manifest when at least one category needs
     # it. Manifests that ship only synthetic + latency categories don't
@@ -436,7 +437,8 @@ def run_gate(
         bench_entries = {}
 
     cache: dict[str, Any] = {}
-    acoustic = _load_rnnt(resolve_model(acoustic_name), device)
+    ckpt_path = acoustic_ckpt_path if acoustic_ckpt_path else resolve_model(acoustic_name)
+    acoustic = _load_rnnt(ckpt_path, device)
     cache["__acoustic__"] = acoustic
     cache[acoustic_name] = acoustic
 
@@ -516,6 +518,13 @@ def main(argv: list[str] | None = None) -> int:
              "baseline acoustic (calibration target).",
     )
     p.add_argument(
+        "--ckpt-path", type=Path, default=None,
+        help="explicit path to a .pt checkpoint, overriding registry "
+             "resolution. Use for ad-hoc gating a new training run "
+             "(e.g. checkpoints/phase11/best_rnnt.pt) before registry "
+             "promotion.",
+    )
+    p.add_argument(
         "--lm", default=None,
         help="optional LM checkpoint. Required for any category whose "
              "preset has lm + fusion_weight > 0 (e.g. 'prose').",
@@ -560,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
         lm_name=args.lm,
         bench_manifest_path=args.bench_manifest,
         device=device,
+        acoustic_ckpt_path=args.ckpt_path,
     )
     print(f"  {'status':<5}  {'category':<28} {'metric':<14} "
           f"{'measured':<14}    {'max':<14}    baseline")

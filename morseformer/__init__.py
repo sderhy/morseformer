@@ -28,4 +28,4 @@ def _unsupported_python_message(version_info: tuple[int, int, int]) -> str:
 if not (_MIN_PYTHON <= sys.version_info[:2] < _MAX_PYTHON_EXCLUSIVE):
     raise RuntimeError(_unsupported_python_message(sys.version_info[:3]))
 
-__version__ = "0.6.3"
+__version__ = "0.6.4"

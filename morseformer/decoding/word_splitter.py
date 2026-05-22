@@ -37,6 +37,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from morseformer.decoding.lm_ngram import CharNGramLM
+
 # --------------------------------------------------------------------------- #
 # Dictionary
 # --------------------------------------------------------------------------- #
@@ -306,7 +308,12 @@ class SplitterConfig:
 _DEFAULT_CFG = SplitterConfig()
 
 
-def split_token(token: str, cfg: SplitterConfig = _DEFAULT_CFG) -> list[str]:
+def split_token(
+    token: str,
+    cfg: SplitterConfig = _DEFAULT_CFG,
+    *,
+    lm: CharNGramLM | None = None,
+) -> list[str]:
     """Segment ``token`` against ``DICT`` via greedy longest-match.
 
     Walks the token left-to-right; at each position, accepts the
@@ -323,6 +330,14 @@ def split_token(token: str, cfg: SplitterConfig = _DEFAULT_CFG) -> list[str]:
       * the segmentation produces fewer than ``cfg.min_words``
         dictionary words, OR the dictionary words cover less than
         ``cfg.min_coverage`` of the total length.
+
+    When ``lm`` is provided, after the greedy segmentation passes the
+    coverage gate we additionally compare ``score_per_char(unsplit)``
+    vs ``score_per_char(" ".join(split))``: if the LM prefers the
+    unsplit form (more likely under amateur idiom distribution), we
+    keep the token unsplit. This catches false-positive splits the
+    coverage heuristic alone cannot — typically common words that
+    happen to decompose into two short dict idioms.
     """
     if not token:
         return [token]
@@ -367,6 +382,11 @@ def split_token(token: str, cfg: SplitterConfig = _DEFAULT_CFG) -> list[str]:
         return [token]
     if sum(matched_lens) / n < cfg.min_coverage:
         return [token]
+    if lm is not None:
+        score_split = lm.score_per_char(" ".join(out))
+        score_unsplit = lm.score_per_char(token)
+        if score_unsplit >= score_split:
+            return [token]
     return out
 
 
@@ -375,19 +395,31 @@ def split_token(token: str, cfg: SplitterConfig = _DEFAULT_CFG) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 
-def _split_line(line: str, cfg: SplitterConfig) -> str:
+def _split_line(
+    line: str, cfg: SplitterConfig, lm: CharNGramLM | None
+) -> str:
     """Split each whitespace-separated token in ``line`` and re-join."""
     out: list[str] = []
     for token in line.split():
-        out.extend(split_token(token, cfg))
+        out.extend(split_token(token, cfg, lm=lm))
     return " ".join(out)
 
 
-def apply(text: str, cfg: SplitterConfig = _DEFAULT_CFG) -> str:
+def apply(
+    text: str,
+    cfg: SplitterConfig = _DEFAULT_CFG,
+    *,
+    lm: CharNGramLM | None = None,
+) -> str:
     """Full pipeline: structural pre-pass + per-token DP segmentation.
 
     Newlines from the structural pre-pass are preserved; segmentation
     operates line-by-line so amateur prosign breaks stay intact.
+
+    When ``lm`` is provided (typically a ``CharNGramLM`` loaded from
+    ``checkpoints/lm_amateur_3gram.pkl``), each candidate split is
+    rescored against the unsplit token; the LM-preferred form wins.
+    Helps cut false-positive splits on clean prose.
     """
     text = structural_normalise(text)
-    return "\n".join(_split_line(line, cfg) for line in text.splitlines())
+    return "\n".join(_split_line(line, cfg, lm) for line in text.splitlines())

@@ -89,19 +89,34 @@ REGISTRY: dict[str, ModelInfo] = {
                     "(5NN cut-numbers + run-on UR/SK/KN/BK). Kept for diff.",
         recommended=False,
     ),
+    "rnnt_phase11b": ModelInfo(
+        name="rnnt_phase11b",
+        filename="rnnt_phase11b.pt",
+        kind="rnnt", vocab=49,
+        description="**v0.6.4 acoustic** — Phase 11b real-audio retrain "
+                    "from phase5_5/best. Forced-alignment-aware word-gap "
+                    "augmentation (Étape A: torchaudio.forced_align on "
+                    "the CTC head produces per-token timestamps in the "
+                    "real-audio JSONL; Étape B: augmentation inserts "
+                    "silence in the true inter-word gap AND truncates "
+                    "the label when audio overflows the target window). "
+                    "20k steps, phase9 curriculum + 20 %% real-audio mix "
+                    "(g3ses force-aligned), word-gap aug U(1.5, 6.0). "
+                    "Real OTA bench: -34 %% mean CER + -37 %% mean WER "
+                    "vs phase5_5 on g3ses+g6pz (26 clips, 31 min). "
+                    "Passes release_gate_v2 10/10.",
+        recommended=True,
+    ),
     "rnnt_phase5_5": ModelInfo(
         name="rnnt_phase5_5",
         filename="rnnt_phase5_5.pt",
         kind="rnnt", vocab=49,
-        description="v0.5.1 / v0.5.2 / **v0.6.2** acoustic — Phase 5.5 "
-                    "long inter-word silence curriculum. Promoted to "
-                    "recommended at v0.6.2 after bench LCWO v1 confirmed "
-                    "it outperforms phase5_7 (-22 %% mean CER) and "
-                    "phase5_8 (-24 %%) on real-audio LCWO + websdr clips, "
-                    "incl. on contest material despite zero contest_dense "
-                    "training. Remained the bootstrap source for every "
-                    "subsequent phase.",
-        recommended=True,
+        description="v0.5.1 / v0.5.2 / v0.6.2 / v0.6.3 acoustic — Phase 5.5 "
+                    "long inter-word silence curriculum. Was recommended "
+                    "from v0.6.2 to v0.6.3; superseded by **rnnt_phase11b** "
+                    "at v0.6.4 (real-OTA -34 %% mean CER). Kept as "
+                    "bootstrap source + fallback.",
+        recommended=False,
     ),
     "rnnt_phase5_4": ModelInfo(
         name="rnnt_phase5_4",
@@ -151,7 +166,7 @@ REGISTRY: dict[str, ModelInfo] = {
     ),
 }
 
-RECOMMENDED_ACOUSTIC = "rnnt_phase5_5"
+RECOMMENDED_ACOUSTIC = "rnnt_phase11b"
 RECOMMENDED_LM = "lm_phase5_2"
 
 
