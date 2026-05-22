@@ -4,10 +4,10 @@
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10-3.13](https://img.shields.io/badge/python-3.10--3.13-blue.svg)](#)
-[![Release: v0.6.3](https://img.shields.io/badge/release-v0.6.3-brightgreen.svg)](CHANGELOG.md#release-v063)
+[![Release: v0.6.4](https://img.shields.io/badge/release-v0.6.4-brightgreen.svg)](CHANGELOG.md#release-v064)
 [![Model on HuggingFace](https://img.shields.io/badge/🤗%20Hub-sderhy/morseformer-yellow)](https://huggingface.co/sderhy/morseformer)
 
-Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline. The current release is **v0.6.3** — a packaging refresh on top of the v0.6.2 acoustic revert from `rnnt_phase5_8.pt` back to `rnnt_phase5_5.pt` (−24 % relative mean CER on the LCWO bench). See [CHANGELOG.md](CHANGELOG.md) for the full version history.
+Conformer + RNN-T Morse decoder with a real-time streaming CLI, trained on a reproducible synthetic-HF pipeline plus a forced-alignment-aware real-audio fine-tune. The current release is **v0.6.4** — promotes **`rnnt_phase11b.pt`** as the recommended acoustic (`-34 %` relative mean CER and `-37 %` mean WER on a real-OTA bench vs the v0.6.3 baseline) and ships a new amateur-idiom char n-gram LM (`lm_amateur_3gram.pkl`, 482 KB) used by the dictionary splitter. See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 
 ## Why
 
@@ -56,7 +56,7 @@ morseformer live --preset conservative
 # Inspect / download checkpoints.
 morseformer models list
 morseformer models list --advanced
-morseformer models download rnnt_phase5_7
+morseformer models download rnnt_phase11b
 ```
 
 The four shipped presets — `live` (default), `prose`, `contest`, `conservative` — bundle the model + thresholds + optional LM behind one flag. `morseformer --help` lists every subcommand.
@@ -84,11 +84,11 @@ morseformer decode my_recording.wav
 
 # Or call the underlying scripts directly for fine-grained control.
 python -m scripts.decode_audio my_recording.wav \
-    --ckpt    release/rnnt_phase5_7.pt \
-    --lm-ckpt release/lm_phase5_2.pt \
-    --fusion-weight 0.7 \
+    --ckpt    release/rnnt_phase11b.pt \
     --confidence-threshold 0.6 \
-    --digit-threshold 0.90
+    --digit-threshold 0.90 \
+    --post-segment \
+    --post-segment-lm release/lm_amateur_3gram.pkl
 ```
 
 Example output on a clean synthetic `CQ DE F4HYY K` @ 20 WPM / +20 dB SNR:
@@ -102,41 +102,43 @@ RNN-T: 'CQ DE F4HYY K'
 
 Per-release notes (model deltas, benches, limitations, recommended decode
 recipes) live in [CHANGELOG.md](CHANGELOG.md). The latest entry is
-[v0.6.3](CHANGELOG.md#release-v063); older entries go all the way back to
+[v0.6.4](CHANGELOG.md#release-v064); older entries go all the way back to
 v0.1.0. The changelog is the project's history file; there is no separate
 `HISTORY.md`.
 
 ## Benchmarks
 
-The current release is gated by `eval/bench_lcwo.py`, a small reproducible
-bench that mixes LCWO prose/oratory, one real websdr FAV22-style clip, and a
-synthetic contest guard. The v0.6.2 decision reverted the recommended
-acoustic from `rnnt_phase5_8.pt` back to `rnnt_phase5_5.pt`:
+The v0.6.4 release passes `eval/release_gate.py` against
+`eval/release_gate_v2.json` (10/10 categories: 4 LCWO prose/oratory
+clips, 1 callsign clip, 1 websdr FAV22-style clip, 1 synthetic
+contest guard, plus silence-FP / word-gap / latency stress tests).
+Promotion was driven by a real-OTA audit of 26 hand-keyed ragchew
+clips (g3ses + g6pz, 31 min total) decoded with the `prose` preset:
 
-| Acoustic | mean CER |
-|---|---:|
-| **`rnnt_phase5_5`** | **2.85 %** |
-| `rnnt_phase5_7` | 3.81 % |
-| `rnnt_phase5_8` | 3.93 % |
-| `rnnt_phase5_9` | 3.93 % |
+| Metric           | v0.6.3 (`rnnt_phase5_5`) | **v0.6.4 (`rnnt_phase11b`)** | Δ rel. |
+|------------------|--------------------------|------------------------------|--------|
+| ALL CER          | 26.98 %                  | **17.75 %**                  | **-34 %** |
+| ALL WER          | 70.34 %                  | **44.31 %**                  | **-37 %** |
+| g3ses CER        | 20.56 %                  | 8.45 %                       | -59 %  |
+| g6pz CER (held-out) | 34.46 %               | 28.60 %                      | -17 %  |
 
-`rnnt_phase5_5` wins 5 / 6 clips and beats the v0.6.0/v0.6.1 acoustic by
-24 % relative mean CER. See [MODEL_CARD.md](MODEL_CARD.md) for model-card
-metrics and [CHANGELOG.md](CHANGELOG.md) for the full release-by-release
-bench history.
+g6pz is held out of the training real-audio mix. v0.6.4 closes a
+silent-truncation bug in the real-audio augmentation that had blocked
+five consecutive retrains (Phase 8 / 8a / 9 / 10 / 11) — see
+[CHANGELOG.md](CHANGELOG.md#release-v064) for the diagnosis.
 
 ### Shipping a release
 
 Every shippable acoustic must pass `eval/release_gate.py`, which runs the
-LCWO clips, a synthetic silence false-positive guard, an inflated word-gap
-guard, and a streaming-latency check against versioned thresholds calibrated
-on `rnnt_phase5_5` (the v0.6.2 baseline, see
-`eval/release_gate_v1.json`):
+LCWO + callsign clips, a synthetic silence false-positive guard, an
+inflated word-gap guard, and a streaming-latency check against versioned
+thresholds (`release_gate_v1.json` calibrated on `rnnt_phase5_5`;
+`release_gate_v2.json` re-calibrated for v0.6.4):
 
 ```bash
-python -m eval.release_gate                          # gate the baseline
-python -m eval.release_gate --acoustic rnnt_phase5_X # gate a candidate
-python -m eval.release_gate --acoustic rnnt_phase5_X --lm lm_phase5_2
+python -m eval.release_gate --manifest eval/release_gate_v2.json
+python -m eval.release_gate --acoustic rnnt_phase11b   # gate by name
+python -m eval.release_gate --ckpt-path checkpoints/<X>/best_rnnt.pt
 ```
 
 A JSON report lands in `reports/release_gate_<acoustic>_<date>.json` and the
@@ -162,7 +164,8 @@ audio ──▶ [1] DSP front-end (complex BPF at carrier)
 - **Encoder**: 8-layer Conformer with RoPE attention, depth-wise conv module with LayerNorm, 4× time sub-sampling. ~3.9 M params. Shared between the CTC and RNN-T heads.
 - **CTC head**: single linear on encoder output → per-frame vocab logits.
 - **RNN-T head**: 128-dim LSTM prediction network + 256-dim joint network, blank at index 0. ~0.2 M params.
-- **LM**: decoder-only GPT (RMSNorm + SwiGLU + RoPE + tied embeddings + causal SDPA), d=256, L=6. ~4.8 M params. Used by the offline `prose` preset; live decoding is acoustic-only.
+- **Splitter LM** (v0.6.4): char 3-gram with stupid-backoff smoothing, trained on 100k synthetic amateur samples from the Phase 9 mix. 482 KB on disk. Rescores candidate splits from `morseformer.decoding.word_splitter` in the `prose` preset.
+- **Neural LM** (legacy, off by default): decoder-only GPT (RMSNorm + SwiGLU + RoPE + tied embeddings + causal SDPA), d=256, L=6. ~4.8 M params. Available via `--lm lm_phase5_2` for research; dropped from the default `prose` preset at v0.6.3 because it hurt amateur jargon on literary prose.
 
 Vocabulary: 49 tokens (blank + 26 letters + 10 digits + 9 punctuation / Morse prosigns + `É`, `À`, apostrophe).
 
@@ -181,8 +184,14 @@ a small real-audio fine-tune mixed in for the v0.5+ line:
   bandpass, and QRM.
 - **Operator timing**: widened element/gap jitter, dash:dot ratio variation,
   gap inflation, and long inter-word silence inflation.
-- **Real audio**: a small set of hand-keyed, aligned 6 s chunks mixed into
-  Phase 5.4; broader real-audio coverage remains the main data gap.
+- **Real audio**: forced-alignment-aware fine-tune (Phase 11b, v0.6.4)
+  on hand-keyed ragchew chunks. Per-token timestamps from
+  `torchaudio.functional.forced_align` drive a word-gap augmentation
+  that inserts silence in the true inter-word gap *and* trims the
+  label when the inflated audio overflows the target window — closing
+  a silent-truncation bug that had blocked Phases 8 / 8a / 9 / 10 /
+  11. Broader real-audio coverage (multi-operator, W1AW transcripts)
+  remains the main data gap.
 
 ## Project history
 

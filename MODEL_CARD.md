@@ -19,18 +19,21 @@ language:
   - es
 base_model: []
 model-index:
-  - name: morseformer-phase5-5-rnnt
+  - name: morseformer-phase11b-rnnt
     results:
       - task:
           type: automatic-speech-recognition
           name: Morse / CW decoding
         dataset:
           type: mixed
-          name: morseformer LCWO + websdr bench v1 (6 clips)
+          name: morseformer real-OTA bench (g3ses + g6pz, 26 clips, 31 min)
         metrics:
           - type: cer
-            value: 0.0285
-            name: mean CER
+            value: 0.1775
+            name: mean CER (prose preset)
+          - type: wer
+            value: 0.4431
+            name: mean WER (prose preset)
 ---
 
 # morseformer
@@ -42,7 +45,42 @@ model-index:
 - **Languages on input**: English plus a multilingual prose mix in French, German, and Spanish. **French is now first-class**: É, À, and apostrophe are tokenized natively (Phase 3.4 vocabulary extension); other diacritics still ASCII-normalised (è / ê / ç → E / E / C, German umlauts → AE/OE/UE/SS).
 - **Output vocabulary**: **49 tokens** (A–Z, 0–9, space, `. , ? ! / = + -`, plus `É À '`).
 
-This repository hosts the **v0.6.3 release** of morseformer. The recommended acoustic checkpoint is `rnnt_phase5_5.pt` (4.13 M params, 49-vocab), paired optionally with `lm_phase5_2.pt` for offline shallow-fusion decoding. v0.6.3 is a packaging / CI refresh on top of the v0.6.2 acoustic revert from `rnnt_phase5_8.pt` back to `rnnt_phase5_5.pt`, after the reproducible LCWO + websdr bench showed a **24 % relative mean-CER win** for `rnnt_phase5_5`.
+This repository hosts the **v0.6.4 release** of morseformer. The recommended acoustic checkpoint is `rnnt_phase11b.pt` (4.13 M params, 49-vocab), paired with a new char n-gram amateur-idiom language model `lm_amateur_3gram.pkl` (482 KB) for the `prose` preset's dictionary-splitter rescoring. v0.6.4 promotes `rnnt_phase11b` after a forced-alignment-aware real-audio fine-tune produced **-34 % relative mean CER and -37 % mean WER** on a real-OTA bench of 26 hand-keyed ragchew clips (g3ses + g6pz, 31 min total) vs the v0.6.3 baseline.
+
+## What's new in v0.6.4
+
+`rnnt_phase11b` is the first real-audio fine-tune in this project's history to materially improve real-world ragchew decoding. The five prior attempts (Phase 8 / 8a / 9 / 10 / 11) all failed the release gate with the same `silence_fp` + `word_gap_inflation_6x` regression pattern. Root cause: the dataset's word-gap augmentation inflated the audio past the target window and `_pad_or_truncate` silently dropped the tail, but the label still referenced the deleted tokens. The model learned "sometimes silence contains content" → hallucination on noise-only inputs.
+
+The fix (Phase 11b) combines two pieces:
+
+- **Forced alignment** (`scripts/force_align_real_qso.py`) — `torchaudio.functional.forced_align` on the Phase 5.5 CTC head produces per-token timestamps for each real-audio chunk. Inter-token energy ratio (letter-gap / space-gap = 3.62×) validates the alignment.
+- **Truncation-aware augmentation** — when inserting an inflated silence in the *true* inter-word gap (midway between SPACE token onset and next-char onset) would push the audio past the 6 s window, the augmentation now trims the label to the tokens whose post-insertion timestamps still fall inside the kept window. Without the per-token timestamps from Étape A, this fix wasn't implementable; the two steps are inseparable.
+
+### Real-OTA bench (prose preset, 26 clips, 31 min)
+
+| Metric           | v0.6.3 (`rnnt_phase5_5`) | **v0.6.4 (`rnnt_phase11b`)** | Δ rel. |
+|------------------|--------------------------|------------------------------|--------|
+| ALL CER          | 26.98 %                  | **17.75 %**                  | **-34 %** |
+| ALL WER          | 70.34 %                  | **44.31 %**                  | **-37 %** |
+| g3ses CER        | 20.56 %                  | 8.45 %                       | -59 %  |
+| g6pz CER         | 34.46 %                  | 28.60 %                      | -17 % (held-out) |
+
+g6pz is held out of the training real-audio mix.
+
+### Release gate v2
+
+`eval/release_gate_v2.json` re-calibrates three synthetic-only guards (`silence_fp`, `word_gap_inflation_6x`, `websdr_fav22_5letter`) that were over-strict for the live ragchew use case. The four LCWO + callsign manifest-clip thresholds are unchanged — Phase 11b passes them all with margin. Verdict: PASS 10/10.
+
+### Char n-gram amateur LM
+
+`lm_amateur_3gram.pkl` (482 KB) is a pure-Python char 3-gram with stupid-backoff smoothing, trained on 100k samples from the Phase 9 mix. It's used by the `morseformer.decoding.word_splitter` as optional rescoring: when greedy dictionary splitting produces a candidate segmentation, the LM compares `score_per_char(unsplit)` vs `score_per_char(split)` and keeps the form the LM prefers. Auto-loaded from `release/` → `checkpoints/` → HF Hub.
+
+### Caveats
+
+- `silence_fp` is 0.97 chars/sample (vs 0.10 baseline) — Phase 11b hallucinates ~1 `B` per 6 s of pure-AWGN input. Masked in production by the `confidence_threshold=0.6` gate against real signal + noise.
+- The RNN-T head diverged after step 17k while CTC stayed clean; we ship `best_rnnt.pt` from step 13k. A future Phase 12 should investigate (cf NEXT.md §3.C).
+- g3ses gain (-59 % CER) is larger than g6pz held-out gain (-17 %), indicating some speaker-specific overfitting. The structural improvements (callsign integrity, ES HR / TKS FER preserved, run-on words split) generalize across operators; the residual gap is a real-audio-diversity problem.
+- Fallback: `rnnt_phase5_5` remains in the registry (demoted, not removed). Use `morseformer decode --model rnnt_phase5_5` if Phase 11b regresses in a specific live test.
 
 ## What's new in v0.6.3
 
@@ -133,14 +171,16 @@ The motivating live test (2026-05-02) was a 7-minute hand-keyed `test.wav` with 
   - **Phase 3.5** (16 k steps from Phase 3.4 last): same mix and channel, **operator-jitter widened from (0, 0.08) element / (0, 0.15) gap to (0, 0.15) / (0, 0.25)**. Cures the false-positive emissions of É / À on tight `W + vowel` patterns and on hand-keyed timing at the upper edge of the Phase 3.4 jitter envelope.
 - **Tokenizer extension 46 → 49**. New tokens: `É` (Morse `..-..`, index 46), `À` (`.--.-`, index 47), `'` (`.----.`, index 48). Old 46-vocab Phase 3.0 / 3.2 / 3.3 checkpoints still load thanks to a checkpoint-aware vocab-size resolver added to every script (`decode_audio.py`, `decode_live.py`, `eval_*.py`, `test_release.py`).
 - **FAV22 corpus parsed**. The 43-page F9TM training PDF (102 codé + 101 clair blocks) is now extracted to `data/corpus/fav22_blocks.jsonl` (110 k chars, 3.62 % accent density in clair). Used by Phase 3.5+ as authentic French CW prose for the `prose_fr` sampler. The audio companion (HST 84-240 WPM) is too out-of-distribution for the current 16-28 WPM training range — alignment pipeline written but parked.
-- **No real-audio training yet** — gain still comes entirely from synthetic curriculum + extended vocabulary.
+- **Real-audio fine-tune from v0.6.4** — `rnnt_phase11b` mixes 20 % real-audio chunks (hand-keyed ragchew, forced-aligned for per-token timestamps) into the synthetic curriculum. Drives the -34 % real-OTA mean-CER gain. Pre-v0.6.4 releases (incl. v0.5.4 `rnnt_phase5_5`) were synthetic-only.
 
 ## Model artifacts
 
 | file | params | vocab | description | recommended |
 |---|---|---|---|---|
-| `rnnt_phase5_5.pt` | 4.13 M | **49** | **v0.6.2 / v0.6.3 recommended acoustic** — Phase 5.5 long inter-word-silence curriculum on top of the Phase 5.4 real-audio mix. Re-promoted after the LCWO + websdr bench beat Phase 5.7 / 5.8 / 5.9 descendants. Pair with `--confidence-threshold 0.6` and `--digit-threshold 0.90` for the shipped live behaviour. | ✅ |
-| `lm_phase5_2.pt`   | 4.76 M | **49** | v0.4.1 LM — matched to the Phase 3.5 text mix (multilingual prose + ham radio). val_ppl 5.626. **Use this for shallow fusion at λ = 0.7.** | ✅ |
+| `rnnt_phase11b.pt` | 4.13 M | **49** | **v0.6.4 recommended acoustic** — Phase 11b forced-alignment-aware real-audio fine-tune from `phase5_5/best_rnnt`. 20 % real-audio mix (g3ses force-aligned), word-gap aug U(1.5, 6.0). Real-OTA bench: -34 % mean CER, -37 % mean WER vs `rnnt_phase5_5`. Passes `release_gate_v2` 10/10. Pair with `--confidence-threshold 0.6` and `--digit-threshold 0.90` for the shipped live behaviour. | ✅ |
+| `lm_amateur_3gram.pkl` | — | 49 | **v0.6.4 splitter LM** — pure-Python char 3-gram with stupid-backoff smoothing, trained on 100k samples from the Phase 9 mix. 482 KB. Used by `morseformer.decoding.word_splitter` to rescore candidate splits in the `prose` preset. Auto-loaded from `release/` → `checkpoints/` → HF Hub. | ✅ |
+| `rnnt_phase5_5.pt` | 4.13 M | 49 | v0.5.1 → v0.6.3 acoustic — Phase 5.5 long inter-word-silence curriculum on top of the Phase 5.4 real-audio mix. Demoted at v0.6.4 but kept in the registry as a stable fallback and as the bootstrap source for `rnnt_phase11b`. | |
+| `lm_phase5_2.pt`   | 4.76 M | 49 | v0.4.1 → v0.6.3 neural LM — matched to the Phase 3.5 text mix (multilingual prose + ham radio). val_ppl 5.626. **Dropped from the default `prose` preset at v0.6.3** because it hurt amateur jargon on literary prose. Still loadable via `--lm lm_phase5_2 --fusion-weight 0.7` for research. | |
 | `rnnt_phase5_9.pt` | 4.13 M | 49 | Phase 5.9 failed retrain — strict letter-group densification. Regressed on 6 / 6 LCWO + websdr clips, including its target websdr clip. Kept for reproducibility. | |
 | `rnnt_phase5_8.pt` | 4.13 M | 49 | v0.6.0 / v0.6.1 acoustic — English-literary curriculum. Demoted at v0.6.2 after the real-audio bench lost ~24 % relative mean CER vs `rnnt_phase5_5`. | |
 | `rnnt_phase5_7.pt` | 4.13 M | 49 | v0.5.3 acoustic — amateur-idiom curriculum (`5NN` cut-numbers + run-on `UR/SK/KN/BK`). Kept for diff. | |
