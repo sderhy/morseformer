@@ -99,6 +99,38 @@ class MainWindow(QMainWindow):
         for act in (self.act_break_tokens, self.act_break_after_k, self.act_lowercase):
             act.toggled.connect(self._on_display_options_changed)
 
+        help_menu = self.menuBar().addMenu("&Help")
+        about_action = QAction("&About morseformer", self)
+        about_action.triggered.connect(self._show_about)
+        help_menu.addAction(about_action)
+
+    def _show_about(self) -> None:
+        repo = "https://github.com/sderhy/morseformer"
+        hf = "https://huggingface.co/sderhy/morseformer"
+        box = QMessageBox(self)
+        box.setWindowTitle("About morseformer")
+        box.setTextFormat(Qt.TextFormat.RichText)
+        box.setIconPixmap(self.windowIcon().pixmap(64, 64))
+        box.setText(f"<h3>morseformer v{__version__}</h3>")
+        box.setInformativeText(
+            "<p>Open-source, transformer-based <b>Morse / CW decoder</b> with a "
+            "built-in ham-specialised language model. It turns received CW audio "
+            "(live from a mic / transceiver, or a WAV file) into readable text, "
+            "and links detected callsigns straight to QRZ.com.</p>"
+            "<p><b>How it works:</b> an acoustic RNN-T model trained on synthetic "
+            "and real on-air CW transcribes the audio; display formatting and "
+            "callsign detection run on top.</p>"
+            f"<p><b>Project:</b> <a href=\"{repo}\">{repo}</a><br>"
+            f"<b>Models:</b> <a href=\"{hf}\">Hugging Face — sderhy/morseformer</a></p>"
+            "<p><b>Author:</b> sderhy &lt;sderhy@gmail.com&gt;<br>"
+            "<b>License:</b> Apache-2.0</p>"
+            "<p><b>Built with:</b> PyTorch · torchaudio · PySide6 (Qt) · NumPy · SciPy. "
+            "Thanks to the amateur-radio operators whose on-air recordings made the "
+            "real-audio training possible.</p>"
+        )
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        box.exec()
+
     def _toggle_action(self, menu, label: str, checked: bool) -> QAction:
         act = QAction(label, self, checkable=True)
         act.setChecked(checked)
