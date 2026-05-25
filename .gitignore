@@ -52,6 +52,7 @@ runs/
 wandb/
 lightning_logs/
 logs/
+target/
 *.log
 # Scratch outputs (sanity dumps, ad-hoc benches, etc.)
 out/
