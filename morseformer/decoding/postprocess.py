@@ -31,17 +31,40 @@ _PROSIGN_SUBS: tuple[tuple[re.Pattern[str], str], ...] = (
 # or treat it as the line break).
 _BREAK_TOKEN_RE = re.compile(r"(=|\bKN\b)[ \t]*")
 
+# Standalone ``K`` (invitation to transmit) — opt-in line break, since
+# many operators end an over with a bare ``K``. Word boundaries keep us
+# off the ``K`` inside callsigns / words.
+_K_BREAK_RE = re.compile(r"(\bK\b)[ \t]*")
 
-def format_output(text: str) -> str:
+
+def format_output(
+    text: str,
+    *,
+    break_tokens: bool = True,
+    break_after_k: bool = False,
+    lowercase: bool = False,
+) -> str:
     """Apply display-only prosign substitutions to a finished string.
 
-    Adds a newline after every ``=`` or standalone ``KN`` so a long
-    decoded transcript reads as a series of over / break segments
-    instead of one continuous upper-case run.
+    By default adds a newline after every ``=`` or standalone ``KN`` so a
+    long decoded transcript reads as a series of over / break segments
+    instead of one continuous upper-case run. The defaults reproduce the
+    historical behaviour; the keyword flags let display surfaces (the GUI
+    Text menu) toggle each transform independently.
+
+    Args:
+        break_tokens: newline after ``=`` / ``KN`` (the default break).
+        break_after_k: also newline after a standalone ``K``.
+        lowercase: render the result in lower case.
     """
     for pat, rep in _PROSIGN_SUBS:
         text = pat.sub(rep, text)
-    text = _BREAK_TOKEN_RE.sub(lambda m: m.group(1) + "\n", text)
+    if break_tokens:
+        text = _BREAK_TOKEN_RE.sub(lambda m: m.group(1) + "\n", text)
+    if break_after_k:
+        text = _K_BREAK_RE.sub(lambda m: m.group(1) + "\n", text)
+    if lowercase:
+        text = text.lower()
     return text.rstrip("\n")
 
 

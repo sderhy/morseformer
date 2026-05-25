@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>morseformer — pistes pour percer le plateau real-OTA</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #15202b;
+      --muted: #5b6673;
+      --line: #d7dde5;
+      --bg: #f7f8fa;
+      --panel: #ffffff;
+      --accent: #175cd3;
+      --high: #b54708;
+      --low: #067647;
+      --crit: #b42318;
+      --code: #eef2f6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+      font-size: 15px;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 28px 80px;
+    }
+    h1 {
+      font-size: 30px;
+      margin: 0 0 4px;
+      letter-spacing: -0.01em;
+    }
+    .sub {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 32px;
+    }
+    h2 {
+      font-size: 22px;
+      margin: 40px 0 10px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--line);
+    }
+    h3 {
+      font-size: 17px;
+      margin: 24px 0 8px;
+    }
+    h4 {
+      font-size: 14px;
+      margin: 16px 0 6px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+    p { margin: 8px 0; }
+    ul, ol { margin: 8px 0 12px; padding-left: 22px; }
+    li { margin: 4px 0; }
+    code {
+      background: var(--code);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-size: 13px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px 24px;
+      margin: 16px 0;
+    }
+    .panel.opt {
+      border-left: 4px solid var(--accent);
+    }
+    .opt h3 {
+      margin-top: 0;
+      font-size: 19px;
+    }
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px 24px;
+      margin: 12px 0 20px;
+      font-size: 13px;
+    }
+    .meta-row .item {
+      display: flex;
+      flex-direction: column;
+    }
+    .meta-row .label {
+      color: var(--muted);
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.06em;
+      margin-bottom: 2px;
+    }
+    .meta-row .value {
+      font-weight: 600;
+    }
+    .tag {
+      display: inline-block;
+      padding: 2px 9px;
+      border-radius: 12px;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .tag.eff-low { background: #e7f5ed; color: var(--low); }
+    .tag.eff-mid { background: #fff0d6; color: var(--high); }
+    .tag.eff-high { background: #ffeaea; color: var(--crit); }
+    .tag.gain-mid { background: #e3edff; color: var(--accent); }
+    .tag.gain-high { background: #d6efff; color: #0e4d8c; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      font-size: 14px;
+      margin: 12px 0 20px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+    th {
+      background: #f1f3f6;
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .toc {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px 20px;
+      font-size: 14px;
+    }
+    .toc a { color: var(--accent); text-decoration: none; }
+    .toc a:hover { text-decoration: underline; }
+    .callout {
+      background: #f1f3f6;
+      border-left: 3px solid var(--muted);
+      padding: 10px 16px;
+      margin: 16px 0;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .callout strong { color: var(--ink); }
+    .reco {
+      background: linear-gradient(180deg, #f3f8ff 0%, #ffffff 100%);
+      border: 1px solid #cfe0fb;
+      border-left: 4px solid var(--accent);
+    }
+    pre.code {
+      background: var(--code);
+      padding: 12px 14px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 13px;
+      font-family: "SF Mono", Menlo, Consolas, monospace;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+  <h1>morseformer — pistes pour percer le plateau real-OTA</h1>
+  <p class="sub">2026-05-23 · post v0.6.4 · Phase 12 + KenLM clôturées, plateau confirmé</p>
+
+  <div class="panel reco">
+    <h3 style="margin-top:0">TL;DR — ma recommandation</h3>
+    <p><strong>Pour réduire le real-OTA CER de 30–50 %</strong>, il faut sortir du cycle "retrain acoustic" qui plafonne. 4 voies sérieuses :</p>
+    <ol>
+      <li><strong>A. Synthesizer plus réaliste</strong> — meilleur ROI, dans nos mains, 1–2 sem. <em>À tenter d'abord</em>.</li>
+      <li><strong>B. Acquisition data massive (10–50 opérateurs)</strong> — la seule voie certaine vers un gros gain durable. Coût social, 1–3 mois outreach.</li>
+      <li><strong>C. Encodeur self-supervised pré-entraîné</strong> — pari R&D, 3–4 sem, gain potentiel important si ça converge.</li>
+      <li><strong>D. Refonte decoder beam + LM stream-level</strong> — gain modeste mais sûr, 2–3 sem.</li>
+    </ol>
+    <p>Séquence proposée : <strong>A → B (en parallèle)</strong>, puis C si A insuffisant.</p>
+  </div>
+
+  <div class="toc">
+    <strong>Table</strong> · <a href="#etat">État actuel</a> · <a href="#plateau">Pourquoi le plateau</a> · <a href="#optA">A · Synthesizer</a> · <a href="#optB">B · Data acquisition</a> · <a href="#optC">C · Self-supervised</a> · <a href="#optD">D · Beam + LM</a> · <a href="#matrice">Matrice de décision</a>
+  </div>
+
+  <h2 id="etat">État actuel</h2>
+
+  <p>v0.6.4 (Phase 11b) est shipped sur GitHub + HF + PyPI. Le ship a apporté un gain net (−34 % real-OTA mean CER vs Phase 5.5) après 5 retrains précédents échoués. Phase 12 (g3ses + W1AW) et KenLM, testés aujourd'hui, n'ont apporté aucun gain net additionnel.</p>
+
+  <table>
+    <thead>
+      <tr><th>bench</th><th class="num">CER %</th><th class="num">WER %</th><th>commentaire</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>LCWO synthétique (7 clips)</td><td class="num">2.09</td><td class="num">10.62</td><td>près du plancher</td></tr>
+      <tr><td>g3ses (training real)</td><td class="num">8.45</td><td class="num">31.01</td><td>dans le train mix</td></tr>
+      <tr><td>g6pz (held-out real)</td><td class="num">28.60</td><td class="num">59.82</td><td>~21 % hors freq-OOD G12/G14</td></tr>
+      <tr><td>Real-OTA mean (g3ses+g6pz)</td><td class="num">17.75</td><td class="num">44.31</td><td>cible &lt; 12 % pour breakthrough</td></tr>
+    </tbody>
+  </table>
+
+  <p>Le <strong>gap sim-to-real est ~8×</strong> (LCWO 2 % vs real 17.75 %). C'est là qu'il faut taper.</p>
+
+  <h2 id="plateau">Pourquoi on est en plateau</h2>
+
+  <p>Deux causes structurelles, dans l'ordre d'importance :</p>
+
+  <h3>1. Sim-to-real gap (cause dominante)</h3>
+  <ul>
+    <li>80 % du train est synthétique, généré par notre simulateur (raised-cosine keying, channels HF approximés, jitter U(0,0.3) sur le timing).</li>
+    <li>Le 20 % real-audio vient de <strong>1 opérateur (g3ses)</strong> dans Phase 11b — c'est tout ce qu'on avait avec transcripts alignés.</li>
+    <li>Le human-keying réel a des signatures bien plus complexes que ce que notre simulateur reproduit : drift d'horloge lent, fatigue, accélération sur les mots fréquents, espacement inter-lettre variable selon le digramme, etc.</li>
+    <li>Phase 12 a confirmé que ajouter du machine-keyed (W1AW) <em>aggrave</em> le problème : le modèle se polarise vers le clean et perd en robustesse.</li>
+  </ul>
+
+  <h3>2. Capacité acoustic limitée (cause secondaire)</h3>
+  <ul>
+    <li>4.1M params (d=144, L=8) — petit pour la variance qu'on demande au modèle de modéliser.</li>
+    <li>L'ablation Phase 3-scale (d=144 × L=16, 8M params) avait égalisé Phase 3.0 sans dépasser → capacité n'est pas le bottleneck <em>actuel</em>. Mais si on injecte 10× plus de data via A ou B, pump capacity redevient pertinent.</li>
+  </ul>
+
+  <div class="callout">
+    <strong>Symptôme révélateur</strong> : sur g3ses+g6pz, WER ~70 % vs CER ~28 % — l'écart énorme signifie que la <em>segmentation des mots</em> est le mode d'échec dominant, pas la reconnaissance des caractères. Le splitter + le LM aident à la marge mais ne ferment pas le gap.
+  </div>
+
+  <h2 id="optA">Option A · Synthesizer beaucoup plus réaliste</h2>
+
+  <div class="panel opt">
+    <div class="meta-row">
+      <div class="item"><span class="label">Coût</span><span class="value">1–2 semaines dev</span></div>
+      <div class="item"><span class="label">Risque</span><span class="value"><span class="tag eff-low">Faible</span></span></div>
+      <div class="item"><span class="label">Gain attendu</span><span class="value"><span class="tag gain-mid">2–5 pp CER</span></span></div>
+      <div class="item"><span class="label">Dépendances externes</span><span class="value">Aucune</span></div>
+    </div>
+
+    <h3>Pourquoi c'est la meilleure première étape</h3>
+    <p>Le simulateur actuel est notre seul levier qui ne demande pas de data externe. Il est <em>complètement dans nos mains</em>, et le gain qu'on n'extrait pas du synth aujourd'hui est de la qualité qu'on laisse sur la table sans coût marginal.</p>
+
+    <h3>Ce qu'il faut construire</h3>
+
+    <h4>A.1 · Neural fist (générateur de keying humain)</h4>
+    <p>Remplacer le jitter Uniforme actuel par un modèle qui apprend les patterns d'un vrai opérateur : LSTM ou small Transformer entraîné sur les <em>timestamps</em> que <code>force_align_real_qso</code> produit déjà (cf. <code>data/real/g3ses_force_aligned.jsonl</code>, fields <code>char_starts_s</code>).</p>
+    <ul>
+      <li>Input : séquence de chars + WPM cible</li>
+      <li>Output : durée de chaque élément (dit, dah, gap intra-lettre, gap inter-lettre, gap inter-mot)</li>
+      <li>Conditionnable sur un embedding "opérateur" → fist style transfer</li>
+      <li>Permet de générer du synthétique avec <em>la signature</em> de g3ses, g6pz, ou tout futur opérateur enregistré</li>
+    </ul>
+
+    <h4>A.2 · Sample-based QRM/QSB/QRN</h4>
+    <p>Le simulateur actuel synthétise QRM/QSB/QRN à partir de paramètres aléatoires. Remplacer par <em>sampling</em> depuis des enregistrements OTA réels :</p>
+    <ul>
+      <li>Capture 1–2 h de bandes silencieuses (HF 7/14/21 MHz) avec un SDR — pas de CW, juste le bruit naturel</li>
+      <li>Découper en clips de 6 s, créer un "noise bank"</li>
+      <li>Pour chaque sample d'entraînement : prendre un clip noise réel et ajouter le signal CW propre par-dessus (SNR contrôlé)</li>
+      <li>Couvre QRN naturel + QRM CW d'autres stations + soft QSB d'évanouissement réel</li>
+    </ul>
+
+    <h4>A.3 · Channel models HF réels</h4>
+    <p>Multipath, doppler, fading dynamics — le simulateur actuel n'a qu'un filtre passe-bande + bruit blanc. Ajouter :</p>
+    <ul>
+      <li>Filtre tropospherique simple (Watterson model 2-tap, paramètres CCIR 520)</li>
+      <li>Drift de fréquence porteuse continue (vs offset constant aujourd'hui)</li>
+      <li>Pre-emphasis / de-emphasis du RX réel (audio response de IC-7300, K3, FT-991 — mesurable depuis test-manu.wav, ragchew2)</li>
+    </ul>
+
+    <h3>Pourquoi ça peut donner 2–5 pp</h3>
+    <p>Le modèle apprend aujourd'hui des features synthétiques propres et applique mal sur le réel. En rapprochant la distribution synth de la distribution réelle (sans plus de real-data), on attaque directement le sim-to-real gap. <em>L'effet de retour</em> de Phase 11b (+34 % sur 124 chunks real) suggère que chaque pp de rapprochement compte.</p>
+
+    <h3>Plan concret (1–2 semaines)</h3>
+    <ol>
+      <li>Semaine 1 : neural fist sur g3ses + g6pz timestamps, génération validée par audio listening</li>
+      <li>Semaine 1 : capture noise bank 30 min (HF silencieuse) + intégrer au simulateur</li>
+      <li>Semaine 2 : Watterson 2-tap + drift continu + RX pre-emphasis mesuré</li>
+      <li>Semaine 2 : Phase 13 retrain depuis Phase 5.5, full new synth, 20k steps</li>
+      <li>Audit gate v2 + audit_real_qso + spot LCWO</li>
+    </ol>
+  </div>
+
+  <h2 id="optB">Option B · Acquisition data massive</h2>
+
+  <div class="panel opt">
+    <div class="meta-row">
+      <div class="item"><span class="label">Coût</span><span class="value">1–3 mois outreach</span></div>
+      <div class="item"><span class="label">Risque</span><span class="value"><span class="tag eff-mid">Social</span></span></div>
+      <div class="item"><span class="label">Gain attendu</span><span class="value"><span class="tag gain-high">5–10 pp CER</span></span></div>
+      <div class="item"><span class="label">Dépendances externes</span><span class="value">Communauté ham</span></div>
+    </div>
+
+    <h3>La seule voie certaine vers un gros gain durable</h3>
+    <p>Avec 30+ heures d'audio real human-keyed de 20–50 opérateurs distincts, on peut probablement réduire le real-OTA CER de moitié, voire plus. C'est la voie classique : "more high-quality data > clever model". Le succès de Phase 11b avec <em>seulement 16 minutes</em> de g3ses suggère que 30+ heures aurait un effet superlinéaire.</p>
+
+    <h3>Cibles et méthodes</h3>
+
+    <h4>B.1 · Contesters (qualité haute, volume modéré)</h4>
+    <p>Démarcher 10–20 top CW contesters via clubs ARRL / REF / DARC / RSGB. Demander :</p>
+    <ul>
+      <li>Un .wav d'un QSO contest (5–15 min) + Cabrillo log → callsigns + 599 + numbers vérifiables automatiquement</li>
+      <li>Cibler CQ WW CW, ARRL DX CW, WPX CW (gros logs, opérateurs sérieux)</li>
+      <li>Outreach personnalisé : message expliquant le projet open-source, comment leur data l'améliore, et qu'on partage les modèles sous Apache 2.0</li>
+    </ul>
+    <p>Estimation réaliste : 30–50 % de réponse positive si bien fait → 5–10 opérateurs, 1–3 h d'audio annoté.</p>
+
+    <h4>B.2 · W1AW transcripts archives (volume haut, qualité variable)</h4>
+    <p>Aujourd'hui on a 4 fichiers (58 min). Les archives ARRL contiennent <em>des années</em> de bulletins. Scraper les archives /15-wpm-code-archive ... /25-wpm-code-archive donne des dizaines d'heures avec transcripts.</p>
+    <p>Caveat (cf <code>project_phase12_w1aw_failure</code>) : W1AW est machine-keyed, ne match pas la distribution test. <strong>Mais</strong> si on l'utilise pour le neural fist de l'option A (apprendre le keying parfait comme référence), ou pour pré-entraîner un encoder qu'on fine-tune ensuite sur du human-keyed, c'est utile. À mixer avec parcimonie (5–10 % du mix).</p>
+
+    <h4>B.3 · LCWO + crowdsource</h4>
+    <p>LCWO (Learn CW Online) génère du audio CW à partir de texte arbitraire à des WPM/conditions paramétrables. Pas de "vrais" opérateurs mais variabilité de paramètres importante. Utile pour bench, moins pour training (déjà couvert par le synth).</p>
+
+    <h4>B.4 · YouTube CW + transcribe</h4>
+    <p>Hours de vidéos QSO existent sur YouTube. Pas de transcript fiable, mais on peut <em>pseudo-labelliser</em> avec notre modèle + force-align via le pipeline existant. Boucle bootstrapping classique : pseudo-label → retrain → meilleur pseudo-label.</p>
+    <p>Coût : engineering modéré (yt-dlp + audio extract + force-align + filter score &gt; 0.85). Volume potentiel : 10+ h.</p>
+
+    <h3>Plan concret (3 mois)</h3>
+    <ol>
+      <li>Mois 1 : outreach contesters (10 emails), scraper W1AW archives (2 ans = ~20 h), proof of concept YouTube pseudo-label sur 5 vidéos</li>
+      <li>Mois 2 : alignement + curation des paires reçues, exclusion freq-OOD, force-align complet</li>
+      <li>Mois 3 : Phase 14 retrain avec mix balanced (g3ses + g6pz + contesters + pseudo-labelled YouTube), full eval</li>
+    </ol>
+
+    <div class="callout">
+      <strong>Réalisme</strong> : c'est l'option avec le meilleur upside mais le plus de friction humaine. Si elle marche, on n'aura plus le problème "plateau acoustic" pour 1–2 ans. Si on ne la fait pas, on restera dans le régime "amélioration marginale par retrain" qu'on observe depuis 7 itérations.
+    </div>
+  </div>
+
+  <h2 id="optC">Option C · Encodeur self-supervised pré-entraîné</h2>
+
+  <div class="panel opt">
+    <div class="meta-row">
+      <div class="item"><span class="label">Coût</span><span class="value">3–4 semaines R&D</span></div>
+      <div class="item"><span class="label">Risque</span><span class="value"><span class="tag eff-high">Élevé</span></span></div>
+      <div class="item"><span class="label">Gain attendu</span><span class="value"><span class="tag gain-high">5–10 pp CER (si converge)</span></span></div>
+      <div class="item"><span class="label">Dépendances externes</span><span class="value">Modèles HF</span></div>
+    </div>
+
+    <h3>Le pari R&D — features audio robustes "gratuites"</h3>
+    <p>wav2vec2, HuBERT, et plus récemment Whisper-tiny (encoder seul) ont été pré-entraînés sur des milliers d'heures d'audio général (parole, bruit, conditions variées). Leurs features sont déjà robustes au bruit. <em>Adapter</em> un de ces encodeurs à CW comme frontend pourrait court-circuiter 100k+ steps de notre apprentissage from-scratch sur du synth.</p>
+
+    <h3>Pourquoi ça peut marcher</h3>
+    <ul>
+      <li>wav2vec2 a appris à représenter le speech dans des conditions bruitées — CW est un signal beaucoup plus simple structurellement, le pre-train devrait transférer</li>
+      <li>L'encodeur Whisper-tiny (37M params, dispo HF) capture des representations stables au bruit, à la distorsion, au speaker</li>
+      <li>Probe + linear head suffit souvent en speech ASR domain transfer pour cracker un domain shift</li>
+    </ul>
+
+    <h3>Pourquoi ça peut ne pas marcher</h3>
+    <ul>
+      <li>CW est <em>très différent</em> du speech : ratio dit/dah, espacement strict, bandes-passantes 100–500 Hz vs 8 kHz pour speech</li>
+      <li>Le pre-train n'a probablement jamais vu de CW — les features apprises peuvent ne pas être pertinentes</li>
+      <li>Notre frontend actuel (extract_features sur band-pass 200 Hz autour de 600 Hz) est très spécialisé. Brancher un encoder speech full-band est non-trivial</li>
+    </ul>
+
+    <h3>Plan concret (3–4 semaines)</h3>
+    <ol>
+      <li>Semaine 1 : extraction features wav2vec2-base sur 50 clips train (probe : juste afficher les representations, voir si elles séparent bien dit/dah/silence)</li>
+      <li>Semaine 2 : si features prometteuses, freeze encoder + train tête CTC + RNN-T par-dessus, mesure baseline</li>
+      <li>Semaine 3 : si baseline OK, unfreeze top layers de l'encoder, fine-tune full</li>
+      <li>Semaine 4 : eval gate + audit. Si gain &gt; 2 pp, c'est un go.</li>
+    </ol>
+
+    <p>Risque acceptable parce qu'on sait dès la fin semaine 1 si les features sont pertinentes. Si non, on coupe et on a perdu une semaine, pas un mois.</p>
+  </div>
+
+  <h2 id="optD">Option D · Refonte decoder beam + LM stream-level</h2>
+
+  <div class="panel opt">
+    <div class="meta-row">
+      <div class="item"><span class="label">Coût</span><span class="value">2–3 semaines</span></div>
+      <div class="item"><span class="label">Risque</span><span class="value"><span class="tag eff-low">Faible</span></span></div>
+      <div class="item"><span class="label">Gain attendu</span><span class="value"><span class="tag gain-mid">1–3 pp WER</span></span></div>
+      <div class="item"><span class="label">Dépendances externes</span><span class="value">Aucune</span></div>
+    </div>
+
+    <h3>Le gain "sûr et modéré"</h3>
+    <p>Phase 7 (beam search + ITU prior) a échoué parce que le decoder existant est "acoustic-first" : il commit chaque token greedy puis re-rescore. Une refonte propre où le beam et le LM cohabitent dans la boucle peut donner 1–3 pp WER, surtout sur les emissions ambiguës bruitées.</p>
+
+    <h3>Ce qu'il faut</h3>
+    <ul>
+      <li>Vrai beam decoder RNN-T (k=4–8) avec diversité maintenue (length normalization, no early commit)</li>
+      <li>LM scoring intégré <em>par hypothèse de beam</em>, pas en post-rescore — le LM influence quelle hypothèse on garde</li>
+      <li>Prior callsign (ITU shape) wired <em>aux frontières de mot</em> dans le beam</li>
+      <li>Streaming-friendly : ce qui marche offline doit marcher en stream pour live decode</li>
+    </ul>
+
+    <h3>Pourquoi ça plafonne à ~3 pp</h3>
+    <p>Le LM (3-gram ou KenLM) ne corrige que les emissions où le modèle acoustique est ambivalent. Sur du bruit pur ou un fading total, ni l'acoustic ni le LM ne peuvent inventer le contenu. Donc gain réel mais borné.</p>
+
+    <h3>Quand le faire</h3>
+    <p>Après A (sinon on optimise un decoder pour un acoustic qu'on va changer). Combinable avec C ou B sans conflit.</p>
+  </div>
+
+  <h2 id="matrice">Matrice de décision</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>option</th>
+        <th>coût</th>
+        <th>risque</th>
+        <th>gain attendu</th>
+        <th>dépendance</th>
+        <th>verdict</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>A · Synthesizer réaliste</strong></td>
+        <td>1–2 sem</td>
+        <td><span class="tag eff-low">Faible</span></td>
+        <td><span class="tag gain-mid">2–5 pp</span></td>
+        <td>Aucune</td>
+        <td><strong>À faire d'abord</strong></td>
+      </tr>
+      <tr>
+        <td><strong>B · Data acquisition</strong></td>
+        <td>1–3 mois</td>
+        <td><span class="tag eff-mid">Social</span></td>
+        <td><span class="tag gain-high">5–10 pp</span></td>
+        <td>Ham community</td>
+        <td>En parallèle de A (boucle longue)</td>
+      </tr>
+      <tr>
+        <td><strong>C · Self-supervised pretrain</strong></td>
+        <td>3–4 sem</td>
+        <td><span class="tag eff-high">Élevé</span></td>
+        <td><span class="tag gain-high">5–10 pp</span></td>
+        <td>HF Hub</td>
+        <td>Si A insuffisant</td>
+      </tr>
+      <tr>
+        <td><strong>D · Beam + LM stream</strong></td>
+        <td>2–3 sem</td>
+        <td><span class="tag eff-low">Faible</span></td>
+        <td><span class="tag gain-mid">1–3 pp WER</span></td>
+        <td>Aucune</td>
+        <td>Après A ; complément, pas substitut</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2 id="combine">Séquence suggérée</h2>
+
+  <div class="panel reco">
+    <ol>
+      <li><strong>Maintenant → +2 semaines :</strong> Option A (synthesizer réaliste). Validable, dans nos mains, baseline pour la suite. Eval sur audit_real_qso + LCWO. Cible : real-OTA CER 17.75 → ≤ 13 %.</li>
+      <li><strong>En parallèle, démarrer B :</strong> outreach 10 contesters semaine 1 — l'attente est asynchrone, autant lancer tôt.</li>
+      <li><strong>Décision A vs C :</strong> si A donne ≥ 2 pp, on enchaîne sur D + intégration des retours B. Si A donne &lt; 1 pp, on passe sur C (le pretrain est probablement nécessaire).</li>
+      <li><strong>Optionnel à n'importe quel moment :</strong> D (beam + LM stream-level) — gain sûr et modéré, peu de conflit avec le reste.</li>
+    </ol>
+
+    <p>Cette séquence respecte les deux contraintes : <em>quick wins d'abord</em> (A et D, validables vite, low risk) et <em>chemins longs lancés tôt</em> (B, outreach asynchrone). C reste en option de repli R&D.</p>
+  </div>
+
+  <p class="sub" style="margin-top:48px">Document généré pour planification stratégique post-v0.6.4. Voir aussi : <code>NEXT.md</code> §3, <code>memory/handoff_post_2026_05_21.md</code>, <code>memory/project_phase12_w1aw_failure.md</code>, <code>memory/project_kenlm_marginal.md</code>.</p>
+
+  </div>
+</body>
+</html>

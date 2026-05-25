@@ -48,7 +48,7 @@ class InputDevice:
 
     def label(self) -> str:
         suffix = " (pulse)" if self.backend == "pulse" else ""
-        return f"{self.name} ({int(self.default_sample_rate)} Hz){suffix}"
+        return f"[{self.index}] {self.name} ({int(self.default_sample_rate)} Hz){suffix}"
 
 
 # ---------------------------------------------------------------------- #
