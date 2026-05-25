@@ -27,11 +27,10 @@ def test_gui_modules_import_clean() -> None:
         app,
         audio_capture,
         decoder_worker,
-        file_tab,
-        live_tab,
-        settings_panel,
         waveform,
     )
+    from morseformer.gui.panels import settings_panel  # noqa: F401
+    from morseformer.gui.tabs import file_tab, live_tab  # noqa: F401
 
 
 def test_list_input_devices_returns_list() -> None:

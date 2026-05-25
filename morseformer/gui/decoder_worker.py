@@ -35,6 +35,7 @@ from morseformer.decoding.streaming import (
     decode_offline,
 )
 from morseformer.gui.audio_capture import AudioCapture, InputDevice
+from morseformer.gui.services.recorder import WavRecorder
 from morseformer.models.acoustic import AcousticConfig
 from morseformer.models.rnnt import RnntConfig, RnntModel
 
@@ -112,6 +113,9 @@ class DecoderWorker(QObject):
     # File decode.
     file_decoded = Signal(str)
 
+    # WAV recording.
+    recording_saved = Signal(str)
+
     def __init__(self, *, device: str = "cpu") -> None:
         super().__init__()
         self._device = torch.device(device)
@@ -119,6 +123,8 @@ class DecoderWorker(QObject):
         self._loaded_acoustic: str | None = None
         self._decoder: StreamingDecoder | None = None
         self._capture: AudioCapture | None = None
+        self._recorder: WavRecorder | None = None
+        self._record_path: str | None = None
         self._queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=64)
         self._drain_timer: QTimer | None = None
         self._preset: Preset = PRESETS["live"]
@@ -163,6 +169,11 @@ class DecoderWorker(QObject):
     def set_carrier_hz(self, value: float) -> None:
         self._carrier_hz = float(value)
 
+    @Slot(object)
+    def set_record_path(self, path: object) -> None:
+        """Arm (path str) or disarm (None) WAV recording of the next session."""
+        self._record_path = str(path) if path else None
+
     # ------------------------------------------------------------------ #
     # Live decode (slots)
     # ------------------------------------------------------------------ #
@@ -203,6 +214,9 @@ class DecoderWorker(QObject):
                 on_audio=_on_audio,
             )
             self._capture.start()
+            if self._record_path:
+                self._recorder = WavRecorder(self._record_path, cfg.sample_rate)
+                self._recorder.start()
             assert self._drain_timer is not None
             self._drain_timer.start()
             self._running = True
@@ -228,6 +242,13 @@ class DecoderWorker(QObject):
                     self.transcript_fragment.emit(tail)
             finally:
                 self._decoder = None
+        if self._recorder is not None:
+            try:
+                saved = self._recorder.stop()
+            finally:
+                self._recorder = None
+            if saved is not None:
+                self.recording_saved.emit(str(saved))
         self._running = False
         self.status_changed.emit("stopped")
 
@@ -237,6 +258,12 @@ class DecoderWorker(QObject):
                 self._capture.stop()
             finally:
                 self._capture = None
+        # Discard a half-open recording if the session failed to start.
+        if self._recorder is not None and not self._running:
+            try:
+                self._recorder.stop()
+            finally:
+                self._recorder = None
 
     @Slot()
     def _drain_queue(self) -> None:
@@ -255,6 +282,8 @@ class DecoderWorker(QObject):
         # if torch is slow.
         self.level_db.emit(_rms_db(audio))
         self.raw_audio.emit(audio)
+        if self._recorder is not None:
+            self._recorder.feed(audio)
         try:
             fragments = self._decoder.feed(audio)
         except Exception as e:  # noqa: BLE001

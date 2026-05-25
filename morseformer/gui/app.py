@@ -1,14 +1,18 @@
-"""Main window: top settings bar + Live/File tabs + status bar."""
+"""Main window: top settings bar + Live/File tabs + menus + status bar."""
 
 from __future__ import annotations
 
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QFileDialog,
     QMainWindow,
+    QMessageBox,
     QStatusBar,
     QTabWidget,
     QVBoxLayout,
@@ -17,20 +21,27 @@ from PySide6.QtWidgets import (
 
 from morseformer import __version__
 from morseformer.gui.decoder_worker import DecoderWorker
-from morseformer.gui.file_tab import FileTab
-from morseformer.gui.live_tab import LiveTab
-from morseformer.gui.settings_panel import SettingsPanel
+from morseformer.gui.panels.settings_panel import SettingsPanel
+from morseformer.gui.services import exporter
+from morseformer.gui.services.config_store import ConfigStore
+from morseformer.gui.services.formatting import DisplayOptions
+from morseformer.gui.tabs.file_tab import FileTab
+from morseformer.gui.tabs.live_tab import LiveTab
 
 
 class MainWindow(QMainWindow):
     _start_live_requested = Signal(object)
     _stop_live_requested = Signal()
     _decode_file_requested = Signal(str)
+    _set_record_path_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle(f"morseformer · v{__version__}")
         self.resize(960, 640)
+
+        self.config = ConfigStore()
+        self.display_options = self.config.get_display_options()
 
         # Central layout: settings panel + tabs.
         central = QWidget()
@@ -42,11 +53,13 @@ class MainWindow(QMainWindow):
         v.addWidget(self.settings)
 
         self.tabs = QTabWidget()
-        self.live_tab = LiveTab()
-        self.file_tab = FileTab()
+        self.live_tab = LiveTab(options=self.display_options)
+        self.file_tab = FileTab(options=self.display_options)
         self.tabs.addTab(self.live_tab, "Live")
         self.tabs.addTab(self.file_tab, "File")
         v.addWidget(self.tabs, 1)
+
+        self.live_tab.set_preferred_device(self.config.get_last_device())
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -56,12 +69,78 @@ class MainWindow(QMainWindow):
         self._build_worker()
         self._wire_signals()
 
+    # ------------------------------------------------------------------ #
+    # Menus
+    # ------------------------------------------------------------------ #
+
     def _build_menu(self) -> None:
-        m = self.menuBar().addMenu("&File")
+        file_menu = self.menuBar().addMenu("&File")
+        self.save_action = QAction("&Save transcript …", self)
+        self.save_action.setShortcut(QKeySequence.StandardKey.Save)
+        self.save_action.triggered.connect(self._save_transcript)
+        file_menu.addAction(self.save_action)
+        file_menu.addSeparator()
         quit_action = QAction("&Quit", self)
         quit_action.setShortcut(QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
-        m.addAction(quit_action)
+        file_menu.addAction(quit_action)
+
+        text_menu = self.menuBar().addMenu("&Text")
+        o = self.display_options
+        self.act_break_tokens = self._toggle_action(
+            text_menu, "Line break after = / KN", o.break_tokens,
+        )
+        self.act_break_after_k = self._toggle_action(
+            text_menu, "Line break after standalone K", o.break_after_k,
+        )
+        self.act_lowercase = self._toggle_action(
+            text_menu, "Lower case", o.lowercase,
+        )
+        for act in (self.act_break_tokens, self.act_break_after_k, self.act_lowercase):
+            act.toggled.connect(self._on_display_options_changed)
+
+    def _toggle_action(self, menu, label: str, checked: bool) -> QAction:
+        act = QAction(label, self, checkable=True)
+        act.setChecked(checked)
+        menu.addAction(act)
+        return act
+
+    def _on_display_options_changed(self) -> None:
+        self.display_options = DisplayOptions(
+            break_tokens=self.act_break_tokens.isChecked(),
+            break_after_k=self.act_break_after_k.isChecked(),
+            lowercase=self.act_lowercase.isChecked(),
+        )
+        self.live_tab.set_display_options(self.display_options)
+        self.file_tab.set_display_options(self.display_options)
+        self.config.set_display_options(self.display_options)
+
+    def _save_transcript(self) -> None:
+        current = self.tabs.currentWidget()
+        text = (
+            current.display_text()
+            if hasattr(current, "display_text")
+            else ""
+        )
+        if not text:
+            self.status_bar.showMessage("nothing to save — transcript is empty", 6000)
+            return
+        default = f"morseformer-{datetime.now():%Y%m%d-%H%M%S}.txt"
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Save transcript", default, "Text files (*.txt);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            exporter.export_text(text, path)
+        except OSError as e:
+            QMessageBox.warning(self, "Save failed", str(e))
+            return
+        self.status_bar.showMessage(f"saved transcript → {Path(path).name}", 6000)
+
+    # ------------------------------------------------------------------ #
+    # Worker
+    # ------------------------------------------------------------------ #
 
     def _build_worker(self) -> None:
         self._thread = QThread(self)
@@ -82,18 +161,23 @@ class MainWindow(QMainWindow):
 
         # Live tab ↔ worker. Routed via main-window signals so the QThread
         # call site stays explicit (auto-queued for cross-thread).
-        self.live_tab.start_requested.connect(self._start_live_requested.emit)
+        self.live_tab.start_requested.connect(self._on_start_live)
         self.live_tab.stop_requested.connect(self._stop_live_requested.emit)
+        self.live_tab.record_toggled.connect(self._on_record_toggled)
         self._start_live_requested.connect(
             w.start_live, type=Qt.ConnectionType.QueuedConnection,
         )
         self._stop_live_requested.connect(
             w.stop_live, type=Qt.ConnectionType.QueuedConnection,
         )
+        self._set_record_path_requested.connect(
+            w.set_record_path, type=Qt.ConnectionType.QueuedConnection,
+        )
 
         w.transcript_fragment.connect(self.live_tab.on_transcript_fragment)
         w.level_db.connect(self.live_tab.on_level_db)
         w.raw_audio.connect(self.live_tab.on_audio)
+        w.recording_saved.connect(self._on_recording_saved)
         w.status_changed.connect(self._on_status)
         w.error.connect(self._on_error)
         w.ready_changed.connect(self._on_ready_changed)
@@ -105,6 +189,38 @@ class MainWindow(QMainWindow):
         )
         w.file_decoded.connect(self.file_tab.on_file_decoded)
         w.error.connect(lambda _msg: self.file_tab.on_error())
+
+    # ------------------------------------------------------------------ #
+    # Live + recording handlers
+    # ------------------------------------------------------------------ #
+
+    def _on_start_live(self, device) -> None:
+        # Remember the chosen input device for next launch.
+        self.config.set_last_device(device.backend, device.name)
+        self._start_live_requested.emit(device)
+
+    def _on_record_toggled(self, armed: bool) -> None:
+        if not armed:
+            self._set_record_path_requested.emit(None)
+            return
+        default = f"morseformer-{datetime.now():%Y%m%d-%H%M%S}.wav"
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Record session to WAV", default, "WAV files (*.wav)",
+        )
+        if not path:
+            # User cancelled → un-arm the toggle.
+            self.live_tab.record_btn.setChecked(False)
+            return
+        self._set_record_path_requested.emit(path)
+        self.status_bar.showMessage(f"recording armed → {Path(path).name}", 6000)
+
+    def _on_recording_saved(self, path: str) -> None:
+        self.status_bar.showMessage(f"recording saved → {Path(path).name}", 8000)
+        self.live_tab.record_btn.setChecked(False)
+
+    # ------------------------------------------------------------------ #
+    # Status / lifecycle
+    # ------------------------------------------------------------------ #
 
     def _on_status(self, msg: str) -> None:
         self.status_bar.showMessage(msg, 8000)
@@ -131,6 +247,7 @@ class MainWindow(QMainWindow):
             self._stop_live_requested.emit()
         except Exception:
             pass
+        self.config.sync()
         self._thread.quit()
         self._thread.wait(2000)
         super().closeEvent(event)
@@ -139,6 +256,7 @@ class MainWindow(QMainWindow):
 def main(argv: list[str] | None = None) -> int:
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("morseformer")
+    app.setOrganizationName("morseformer")
     win = MainWindow()
     win.show()
     return app.exec()
