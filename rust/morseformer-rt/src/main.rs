@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{f32::consts::PI, fs, path::PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -34,6 +34,24 @@ enum Command {
     /// Decode precomputed features from a .npy file.
     DecodeFeatures {
         features: PathBuf,
+        #[arg(long, default_value_t = 5)]
+        max_emit_per_frame: usize,
+    },
+    /// Decode a WAV file directly with the Rust frontend.
+    DecodeWav {
+        wav: PathBuf,
+        #[arg(long, default_value_t = 600.0)]
+        freq: f32,
+        #[arg(long, default_value_t = 8000)]
+        target_sample_rate: usize,
+        #[arg(long, default_value_t = 500)]
+        frame_rate: usize,
+        #[arg(long, default_value_t = 6.0)]
+        window_seconds: f32,
+        #[arg(long, default_value_t = 2.0)]
+        hop_seconds: f32,
+        #[arg(long, default_value_t = false)]
+        no_windowing: bool,
         #[arg(long, default_value_t = 5)]
         max_emit_per_frame: usize,
     },
@@ -77,6 +95,12 @@ struct Runtime {
     encoder: Session,
     predictor_step: Session,
     joint: Session,
+}
+
+struct DecodeResult {
+    frames: usize,
+    enc_frames: usize,
+    aligned: Vec<(usize, usize)>,
 }
 
 impl Runtime {
@@ -186,7 +210,122 @@ impl Runtime {
         self.greedy_decode(features, max_emit_per_frame)
     }
 
+    fn decode_wav(
+        self,
+        path: PathBuf,
+        freq: f32,
+        target_sample_rate: usize,
+        frame_rate: usize,
+        window_seconds: f32,
+        hop_seconds: f32,
+        no_windowing: bool,
+        max_emit_per_frame: usize,
+    ) -> Result<()> {
+        let (audio, sample_rate) = load_wav_mono(&path)?;
+        let audio = if sample_rate == target_sample_rate {
+            audio
+        } else {
+            resample_linear(&audio, sample_rate, target_sample_rate)
+        };
+        let features = extract_cw_features(&audio, target_sample_rate, freq, frame_rate)?;
+        if no_windowing || window_seconds <= 0.0 {
+            self.greedy_decode(features.insert_axis(Axis(0)), max_emit_per_frame)
+        } else {
+            self.decode_feature_windows(
+                features,
+                frame_rate,
+                window_seconds,
+                hop_seconds,
+                max_emit_per_frame,
+            )
+        }
+    }
+
     fn greedy_decode(mut self, features: ArrayD<f32>, max_emit_per_frame: usize) -> Result<()> {
+        let result = self.greedy_decode_result(features, max_emit_per_frame)?;
+        print_decode_result(&result);
+        Ok(())
+    }
+
+    fn decode_feature_windows(
+        mut self,
+        features: ArrayD<f32>,
+        frame_rate: usize,
+        window_seconds: f32,
+        hop_seconds: f32,
+        max_emit_per_frame: usize,
+    ) -> Result<()> {
+        if features.ndim() != 2 {
+            anyhow::bail!("windowed decode expects [frames,input_dim] features");
+        }
+        if window_seconds <= 0.0 || hop_seconds <= 0.0 || hop_seconds > window_seconds {
+            anyhow::bail!(
+                "invalid windowing: window_seconds={window_seconds} hop_seconds={hop_seconds}"
+            );
+        }
+        let n_frames = features.shape()[0];
+        let input_dim = self.manifest.model.input_dim;
+        let window_frames = (window_seconds * frame_rate as f32).round() as usize;
+        let hop_frames = (hop_seconds * frame_rate as f32).round() as usize;
+        if window_frames == 0 || hop_frames == 0 {
+            anyhow::bail!("window/hop produced zero frames");
+        }
+
+        let mut window_start = 0usize;
+        let mut committed_until = 0usize;
+        let mut tokens = Vec::new();
+        let mut chunks = 0usize;
+
+        loop {
+            if window_start >= n_frames {
+                break;
+            }
+            let window_end = (window_start + window_frames).min(n_frames);
+            let is_first = window_start == 0;
+            let is_final = window_end == n_frames;
+            let window = features
+                .slice(s![window_start..window_end, ..])
+                .to_owned()
+                .into_dyn()
+                .insert_axis(Axis(0));
+            let result = self.greedy_decode_result(window, max_emit_per_frame)?;
+            let (commit_lo, commit_hi) = commit_zone_frames(
+                window_start,
+                window_end - window_start,
+                window_frames,
+                hop_frames,
+                committed_until,
+                is_first,
+                is_final,
+            );
+            for (tok, enc_frame_idx) in result.aligned {
+                let abs_feature_frame =
+                    window_start + enc_frame_idx * self.manifest.runtime.subsample;
+                if abs_feature_frame >= commit_lo && abs_feature_frame < commit_hi {
+                    tokens.push(tok);
+                }
+            }
+            committed_until = commit_hi;
+            chunks += 1;
+            if is_final {
+                break;
+            }
+            window_start += hop_frames;
+        }
+
+        println!("frames: {n_frames}");
+        println!("chunks: {chunks}");
+        println!("tokens: {:?}", tokens);
+        println!("text: {}", decode_tokens(&tokens));
+        println!("input_dim: {input_dim}");
+        Ok(())
+    }
+
+    fn greedy_decode_result(
+        &mut self,
+        features: ArrayD<f32>,
+        max_emit_per_frame: usize,
+    ) -> Result<DecodeResult> {
         let m = &self.manifest.model;
         let input_dim = m.input_dim;
         let pred_lstm_layers = m.pred_lstm_layers;
@@ -226,7 +365,7 @@ impl Runtime {
         h = h_next;
         c = c_next;
 
-        let mut tokens = Vec::new();
+        let mut aligned = Vec::new();
         for frame_idx in 0..enc_len {
             let enc_frame = enc_out
                 .slice(s![.., frame_idx..frame_idx + 1, ..])
@@ -243,7 +382,7 @@ impl Runtime {
                 if tok == blank_index {
                     break;
                 }
-                tokens.push(tok);
+                aligned.push((tok, frame_idx));
                 token = Array::<i64, _>::from_shape_vec(IxDyn(&[1, 1]), vec![tok as i64])?;
                 let (next_pred, next_h, next_c) = self.predictor_step(&token, &h, &c)?;
                 pred_out = next_pred;
@@ -253,11 +392,11 @@ impl Runtime {
             }
         }
 
-        println!("frames: {frames}");
-        println!("encoder frames: {enc_len}");
-        println!("tokens: {:?}", tokens);
-        println!("text: {}", decode_tokens(&tokens));
-        Ok(())
+        Ok(DecodeResult {
+            frames,
+            enc_frames: enc_len,
+            aligned,
+        })
     }
 
     fn predictor_step(
@@ -340,6 +479,45 @@ fn decode_tokens(tokens: &[usize]) -> String {
     out.trim().to_string()
 }
 
+fn print_decode_result(result: &DecodeResult) {
+    let tokens: Vec<usize> = result.aligned.iter().map(|(tok, _frame)| *tok).collect();
+    println!("frames: {}", result.frames);
+    println!("encoder frames: {}", result.enc_frames);
+    println!("tokens: {:?}", tokens);
+    println!("text: {}", decode_tokens(&tokens));
+}
+
+fn commit_zone_frames(
+    window_start: usize,
+    window_len: usize,
+    window_frames: usize,
+    hop_frames: usize,
+    committed_until: usize,
+    is_first: bool,
+    is_final: bool,
+) -> (usize, usize) {
+    let centre = window_start + window_frames / 2;
+    let mut lo = centre.saturating_sub(hop_frames / 2);
+    let mut hi = centre + (hop_frames - hop_frames / 2);
+
+    if is_first {
+        lo = 0;
+    }
+    if is_final {
+        hi = window_start + window_len;
+        if !is_first {
+            lo = committed_until;
+        }
+    }
+    if lo < committed_until {
+        lo = committed_until;
+    }
+    if hi < lo {
+        hi = lo;
+    }
+    (lo, hi)
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let runtime = Runtime::load(cli.onnx_dir)?;
@@ -358,6 +536,184 @@ fn main() -> Result<()> {
             features,
             max_emit_per_frame,
         } => runtime.decode_features(features, max_emit_per_frame)?,
+        Command::DecodeWav {
+            wav,
+            freq,
+            target_sample_rate,
+            frame_rate,
+            window_seconds,
+            hop_seconds,
+            no_windowing,
+            max_emit_per_frame,
+        } => runtime.decode_wav(
+            wav,
+            freq,
+            target_sample_rate,
+            frame_rate,
+            window_seconds,
+            hop_seconds,
+            no_windowing,
+            max_emit_per_frame,
+        )?,
     }
     Ok(())
+}
+
+fn load_wav_mono(path: &PathBuf) -> Result<(Vec<f32>, usize)> {
+    let mut reader =
+        hound::WavReader::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let spec = reader.spec();
+    let channels = spec.channels as usize;
+    if channels == 0 {
+        anyhow::bail!("{} has zero channels", path.display());
+    }
+
+    let samples = match spec.sample_format {
+        hound::SampleFormat::Float => reader
+            .samples::<f32>()
+            .collect::<Result<Vec<_>, _>>()
+            .with_context(|| format!("reading float samples from {}", path.display()))?,
+        hound::SampleFormat::Int => {
+            let scale = if spec.bits_per_sample == 0 {
+                anyhow::bail!("{} reports bits_per_sample=0", path.display());
+            } else {
+                (1_i64 << (spec.bits_per_sample - 1)) as f32
+            };
+            reader
+                .samples::<i32>()
+                .map(|s| s.map(|v| v as f32 / scale))
+                .collect::<Result<Vec<_>, _>>()
+                .with_context(|| format!("reading int samples from {}", path.display()))?
+        }
+    };
+
+    let mono = if channels == 1 {
+        samples
+    } else {
+        samples
+            .chunks_exact(channels)
+            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
+            .collect()
+    };
+    Ok((mono, spec.sample_rate as usize))
+}
+
+fn extract_cw_features(
+    audio: &[f32],
+    sample_rate: usize,
+    tone_freq: f32,
+    frame_rate: usize,
+) -> Result<ArrayD<f32>> {
+    if frame_rate == 0 || sample_rate % frame_rate != 0 {
+        anyhow::bail!("sample_rate={sample_rate} must be a multiple of frame_rate={frame_rate}");
+    }
+    let hop = sample_rate / frame_rate;
+    if audio.len() < hop * 2 {
+        return Ok(Array::<f32, _>::zeros(IxDyn(&[0, 1])));
+    }
+
+    let n_frames = audio.len() / hop;
+    let mut features = Vec::with_capacity(n_frames);
+    for frame_idx in 0..n_frames {
+        let lo = frame_idx * hop;
+        let hi = lo + hop;
+        let mut i_sum = 0.0_f32;
+        let mut q_sum = 0.0_f32;
+        for (offset, sample) in audio[lo..hi].iter().copied().enumerate() {
+            let t = (lo + offset) as f32 / sample_rate as f32;
+            let phase = 2.0 * PI * tone_freq * t;
+            i_sum += sample * phase.cos();
+            q_sum -= sample * phase.sin();
+        }
+        let scale = 2.0 / hop as f32;
+        let envelope = ((i_sum * scale).powi(2) + (q_sum * scale).powi(2)).sqrt();
+        features.push((envelope + 1e-6).ln());
+    }
+    normalise(&mut features);
+    Array::from_shape_vec(IxDyn(&[n_frames, 1]), features).context("building feature array")
+}
+
+fn resample_linear(audio: &[f32], src_rate: usize, dst_rate: usize) -> Vec<f32> {
+    if audio.is_empty() || src_rate == dst_rate {
+        return audio.to_vec();
+    }
+    let out_len = ((audio.len() as u128 * dst_rate as u128) / src_rate as u128) as usize;
+    let mut out = Vec::with_capacity(out_len);
+    let ratio = src_rate as f64 / dst_rate as f64;
+    for i in 0..out_len {
+        let src_pos = i as f64 * ratio;
+        let lo = src_pos.floor() as usize;
+        let frac = (src_pos - lo as f64) as f32;
+        let a = audio.get(lo).copied().unwrap_or(0.0);
+        let b = audio.get(lo + 1).copied().unwrap_or(a);
+        out.push(a + (b - a) * frac);
+    }
+    out
+}
+
+fn normalise(values: &mut [f32]) {
+    if values.is_empty() {
+        return;
+    }
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    let var = values
+        .iter()
+        .map(|v| {
+            let d = *v - mean;
+            d * d
+        })
+        .sum::<f32>()
+        / values.len() as f32;
+    let std = var.sqrt();
+    if std < 1e-8 {
+        for value in values {
+            *value -= mean;
+        }
+    } else {
+        for value in values {
+            *value = (*value - mean) / std;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_tokens_skips_blank_and_maps_vocab() {
+        assert_eq!(decode_tokens(&[4, 18, 1, 21, 6, 20, 21]), "CQ TEST");
+        assert_eq!(decode_tokens(&[0, 2, 0, 3]), "AB");
+    }
+
+    #[test]
+    fn commit_zone_tiles_first_middle_and_final_windows() {
+        assert_eq!(
+            commit_zone_frames(0, 3000, 3000, 1000, 0, true, false),
+            (0, 2000)
+        );
+        assert_eq!(
+            commit_zone_frames(1000, 3000, 3000, 1000, 2000, false, false),
+            (2000, 3000),
+        );
+        assert_eq!(
+            commit_zone_frames(8000, 1662, 3000, 1000, 9000, false, true),
+            (9000, 9662),
+        );
+    }
+
+    #[test]
+    fn linear_resample_preserves_empty_and_identity() {
+        let empty: Vec<f32> = vec![];
+        assert!(resample_linear(&empty, 48000, 8000).is_empty());
+        let audio = vec![0.0, 1.0, 0.0, -1.0];
+        assert_eq!(resample_linear(&audio, 8000, 8000), audio);
+    }
+
+    #[test]
+    fn linear_resample_changes_length_by_rate_ratio() {
+        let audio = vec![0.0; 48_000];
+        let out = resample_linear(&audio, 48_000, 8_000);
+        assert_eq!(out.len(), 8_000);
+    }
 }
