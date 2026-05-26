@@ -16,6 +16,8 @@ dist/
 .venv/
 venv/
 env/
+node_modules/
+rust/morseformer-ui/src-tauri/gen/
 
 # Model checkpoints (released via HuggingFace Hub, not committed)
 *.pt

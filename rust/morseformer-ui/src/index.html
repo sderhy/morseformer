@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Morseformer</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>Morseformer</h1>
+          <p>Rust / ONNX WAV decoder</p>
+        </div>
+        <span class="badge">developer preview</span>
+      </header>
+
+      <nav class="tabs" aria-label="Decode mode">
+        <button id="fileTabBtn" class="tab active" type="button">File</button>
+        <button id="liveTabBtn" class="tab" type="button">Live</button>
+      </nav>
+
+      <section id="filePanel" class="panel active">
+        <div class="field-row">
+          <label class="grow">
+            WAV file
+            <input id="wavPath" type="text" spellcheck="false" placeholder="/path/to/audio.wav" />
+          </label>
+          <button id="browseBtn" class="secondary" type="button" title="Choose a WAV file">
+            File
+          </button>
+        </div>
+        <div class="field-row">
+          <label class="grow">
+            ONNX directory
+            <input
+              id="onnxDir"
+              type="text"
+              spellcheck="false"
+              value="build/onnx/rnnt_phase11b"
+            />
+          </label>
+          <button
+            id="resetModelBtn"
+            class="secondary"
+            type="button"
+            title="Reset the model directory to the local exported rnnt_phase11b ONNX files"
+          >
+            Reset
+          </button>
+        </div>
+        <div class="grid">
+          <label>
+            <span class="label-line">
+              Tone Hz
+              <span
+                class="hint"
+                title="Carrier tone frequency to demodulate. Most current Morseformer examples use 600 Hz."
+                >?</span
+              >
+            </span>
+            <input id="freq" type="number" value="600" min="100" max="3000" step="10" />
+          </label>
+          <label>
+            <span class="label-line">
+              Target sample rate
+              <span
+                class="hint"
+                title="The WAV is resampled to this rate before feature extraction. Keep 8000 unless the model/export changes."
+                >?</span
+              >
+            </span>
+            <input id="sampleRate" type="number" value="8000" min="4000" max="96000" step="1000" />
+          </label>
+          <label>
+            <span class="label-line">
+              Window seconds
+              <span
+                class="hint"
+                title="Duration of each chunk sent to the model. 6 seconds matches the model's training window."
+                >?</span
+              >
+            </span>
+            <input id="windowSeconds" type="number" value="6" min="0" max="30" step="0.5" />
+          </label>
+          <label>
+            <span class="label-line">
+              Hop seconds
+              <span
+                class="hint"
+                title="Step between windows. 2 seconds gives overlap, then the decoder keeps the stable center region."
+                >?</span
+              >
+            </span>
+            <input id="hopSeconds" type="number" value="2" min="0.25" max="30" step="0.25" />
+          </label>
+        </div>
+        <label class="check">
+          <input id="noWindowing" type="checkbox" />
+          <span>Decode full file without windowing</span>
+        </label>
+        <div class="actions">
+          <button id="decodeBtn" type="button">Decode WAV</button>
+          <button id="clearBtn" class="secondary" type="button">Clear</button>
+        </div>
+      </section>
+
+      <section id="livePanel" class="panel">
+        <div class="field-row">
+          <label class="grow">
+            Audio input
+            <select id="inputDevice"></select>
+          </label>
+          <button
+            id="refreshDevicesBtn"
+            class="secondary"
+            type="button"
+            title="Refresh available microphone and audio input devices"
+          >
+            Refresh
+          </button>
+        </div>
+        <div class="grid">
+          <label>
+            <span class="label-line">
+              Tone Hz
+              <span
+                class="hint"
+                title="Carrier tone frequency to demodulate from the selected input device."
+                >?</span
+              >
+            </span>
+            <input id="liveFreq" type="number" value="600" min="100" max="3000" step="10" />
+          </label>
+          <label>
+            <span class="label-line">
+              Target sample rate
+              <span class="hint" title="Live audio will be resampled to this rate. Keep 8000.">?</span>
+            </span>
+            <input id="liveSampleRate" type="number" value="8000" min="4000" max="96000" step="1000" />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="startLiveBtn" type="button" disabled>Start</button>
+          <button id="stopLiveBtn" class="secondary" type="button" disabled>Stop</button>
+          <button id="clearLiveBtn" class="secondary" type="button">Clear</button>
+        </div>
+      </section>
+
+      <section class="output">
+        <div class="output-header">
+          <h2>Transcript</h2>
+          <span id="status">idle</span>
+        </div>
+        <pre id="transcript"></pre>
+        <details class="raw-panel">
+          <summary>Runtime output</summary>
+          <pre id="rawOutput"></pre>
+        </details>
+      </section>
+    </main>
+  </body>
+</html>
