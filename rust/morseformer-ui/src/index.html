@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -8,157 +8,271 @@
     <script type="module" src="./main.js"></script>
   </head>
   <body>
-    <main class="shell">
-      <header class="topbar">
-        <div>
-          <h1>Morseformer</h1>
-          <p>Rust / ONNX WAV decoder</p>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M4 14.5h3.2l1.4-5 3.2 10 2.7-15 2.1 10H20" />
+            </svg>
+          </div>
+          <div>
+            <h1>Morseformer</h1>
+            <p>Rust / ONNX decoder</p>
+          </div>
         </div>
-        <span class="badge">developer preview</span>
-      </header>
 
-      <nav class="tabs" aria-label="Decode mode">
-        <button id="fileTabBtn" class="tab active" type="button">File</button>
-        <button id="liveTabBtn" class="tab" type="button">Live</button>
-      </nav>
-
-      <section id="filePanel" class="panel active">
-        <div class="field-row">
-          <label class="grow">
-            WAV file
-            <input id="wavPath" type="text" spellcheck="false" placeholder="/path/to/audio.wav" />
-          </label>
-          <button id="browseBtn" class="secondary" type="button" title="Choose a WAV file">
+        <nav class="mode-nav" aria-label="Decode mode">
+          <button id="fileTabBtn" class="nav-item active" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h3l2 2h5A2.5 2.5 0 0 1 19 8.5v8A2.5 2.5 0 0 1 16.5 19h-10A2.5 2.5 0 0 1 4 16.5z" />
+            </svg>
             File
           </button>
-        </div>
-        <div class="field-row">
-          <label class="grow">
-            ONNX directory
-            <input
-              id="onnxDir"
-              type="text"
-              spellcheck="false"
-              value="build/onnx/rnnt_phase11b"
-            />
-          </label>
-          <button
-            id="resetModelBtn"
-            class="secondary"
-            type="button"
-            title="Reset the model directory to the local exported rnnt_phase11b ONNX files"
-          >
-            Reset
+          <button id="liveTabBtn" class="nav-item" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 4v16M8 8v8M16 8v8M4 11v2M20 11v2" />
+            </svg>
+            Live
           </button>
-        </div>
-        <div class="grid">
-          <label>
-            <span class="label-line">
-              Tone Hz
-              <span
-                class="hint"
-                title="Carrier tone frequency to demodulate. Most current Morseformer examples use 600 Hz."
-                >?</span
-              >
-            </span>
-            <input id="freq" type="number" value="600" min="100" max="3000" step="10" />
-          </label>
-          <label>
-            <span class="label-line">
-              Target sample rate
-              <span
-                class="hint"
-                title="The WAV is resampled to this rate before feature extraction. Keep 8000 unless the model/export changes."
-                >?</span
-              >
-            </span>
-            <input id="sampleRate" type="number" value="8000" min="4000" max="96000" step="1000" />
-          </label>
-          <label>
-            <span class="label-line">
-              Window seconds
-              <span
-                class="hint"
-                title="Duration of each chunk sent to the model. 6 seconds matches the model's training window."
-                >?</span
-              >
-            </span>
-            <input id="windowSeconds" type="number" value="6" min="0" max="30" step="0.5" />
-          </label>
-          <label>
-            <span class="label-line">
-              Hop seconds
-              <span
-                class="hint"
-                title="Step between windows. 2 seconds gives overlap, then the decoder keeps the stable center region."
-                >?</span
-              >
-            </span>
-            <input id="hopSeconds" type="number" value="2" min="0.25" max="30" step="0.25" />
-          </label>
-        </div>
-        <label class="check">
-          <input id="noWindowing" type="checkbox" />
-          <span>Decode full file without windowing</span>
-        </label>
-        <div class="actions">
-          <button id="decodeBtn" type="button">Decode WAV</button>
-          <button id="clearBtn" class="secondary" type="button">Clear</button>
-        </div>
-      </section>
+        </nav>
 
-      <section id="livePanel" class="panel">
-        <div class="field-row">
-          <label class="grow">
-            Audio input
-            <select id="inputDevice"></select>
-          </label>
-          <button
-            id="refreshDevicesBtn"
-            class="secondary"
-            type="button"
-            title="Refresh available microphone and audio input devices"
-          >
-            Refresh
+        <div class="sidebar-footer">
+          <button id="themeBtn" class="icon-button wide" type="button" title="Switch light or dark mode">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 3a6.8 6.8 0 1 0 6.6 8.4A5.4 5.4 0 0 1 12 3z" />
+            </svg>
+            <span id="themeLabel">Dark mode</span>
           </button>
+          <div class="status-card">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="status">idle</span>
+          </div>
         </div>
-        <div class="grid">
-          <label>
-            <span class="label-line">
-              Tone Hz
-              <span
-                class="hint"
-                title="Carrier tone frequency to demodulate from the selected input device."
-                >?</span
-              >
-            </span>
-            <input id="liveFreq" type="number" value="600" min="100" max="3000" step="10" />
-          </label>
-          <label>
-            <span class="label-line">
-              Target sample rate
-              <span class="hint" title="Live audio will be resampled to this rate. Keep 8000.">?</span>
-            </span>
-            <input id="liveSampleRate" type="number" value="8000" min="4000" max="96000" step="1000" />
-          </label>
-        </div>
-        <div class="actions">
-          <button id="startLiveBtn" type="button" disabled>Start</button>
-          <button id="stopLiveBtn" class="secondary" type="button" disabled>Stop</button>
-          <button id="clearLiveBtn" class="secondary" type="button">Clear</button>
-        </div>
-      </section>
+      </aside>
 
-      <section class="output">
-        <div class="output-header">
-          <h2>Transcript</h2>
-          <span id="status">idle</span>
+      <section class="workspace">
+        <header class="workspace-header">
+          <div>
+            <p class="eyebrow">Developer preview</p>
+            <h2 id="modeTitle">WAV file decode</h2>
+          </div>
+          <div class="header-actions">
+            <button id="copyBtn" class="secondary small" type="button" title="Copy transcript">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M8 8h10v12H8z" />
+                <path d="M6 16H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
+              </svg>
+              Copy
+            </button>
+            <button id="clearAllBtn" class="secondary small" type="button" title="Clear transcript and runtime output">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M5 12h14M8 8l-4 4 4 4M16 8l4 4-4 4" />
+              </svg>
+              Clear
+            </button>
+          </div>
+        </header>
+
+        <div class="content-grid">
+          <section class="control-stack" aria-label="Decode controls">
+            <section id="filePanel" class="panel active">
+              <div class="section-title">
+                <h3>File source</h3>
+                <span>WAV input</span>
+              </div>
+              <div class="field-row">
+                <label class="grow">
+                  WAV file
+                  <input id="wavPath" type="text" spellcheck="false" placeholder="/path/to/audio.wav" />
+                </label>
+                <button id="browseBtn" class="secondary" type="button" title="Choose a WAV file">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h3l2 2h5A2.5 2.5 0 0 1 19 8.5v8A2.5 2.5 0 0 1 16.5 19h-10A2.5 2.5 0 0 1 4 16.5z" />
+                  </svg>
+                  File
+                </button>
+              </div>
+              <div class="field-row">
+                <label class="grow">
+                  ONNX directory
+                  <input id="onnxDir" type="text" spellcheck="false" value="build/onnx/rnnt_phase11b" />
+                </label>
+                <button id="resetModelBtn" class="secondary" type="button" title="Reset to the local exported model directory">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 4v6h6" />
+                    <path d="M5 10a7 7 0 1 0 2-5" />
+                  </svg>
+                  Reset
+                </button>
+              </div>
+
+              <details class="advanced-controls">
+                <summary>Advanced decode settings</summary>
+                <div class="grid compact">
+                  <label>
+                    <span class="label-line">
+                      Tone Hz
+                      <span class="hint" title="Carrier tone frequency to demodulate. Most current Morseformer examples use 600 Hz.">?</span>
+                    </span>
+                    <input id="freq" type="number" value="600" min="100" max="3000" step="10" />
+                  </label>
+                  <label>
+                    <span class="label-line">
+                      Target sample rate
+                      <span class="hint" title="The WAV is resampled to this rate before feature extraction. Keep 8000 unless the model/export changes.">?</span>
+                    </span>
+                    <input id="sampleRate" type="number" value="8000" min="4000" max="96000" step="1000" />
+                  </label>
+                  <label>
+                    <span class="label-line">
+                      Window seconds
+                      <span class="hint" title="Duration of each chunk sent to the model. 6 seconds matches the model's training window.">?</span>
+                    </span>
+                    <input id="windowSeconds" type="number" value="6" min="0" max="30" step="0.5" />
+                  </label>
+                  <label>
+                    <span class="label-line">
+                      Hop seconds
+                      <span class="hint" title="Step between windows. 2 seconds gives overlap, then the decoder keeps the stable center region.">?</span>
+                    </span>
+                    <input id="hopSeconds" type="number" value="2" min="0.25" max="30" step="0.25" />
+                  </label>
+                </div>
+                <label class="check">
+                  <input id="noWindowing" type="checkbox" />
+                  <span>Decode full file without windowing</span>
+                </label>
+              </details>
+
+              <div class="actions">
+                <button id="decodeBtn" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 5v14l12-7z" />
+                  </svg>
+                  Decode WAV
+                </button>
+                <button id="clearBtn" class="secondary" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h14M8 8l-4 4 4 4M16 8l4 4-4 4" />
+                  </svg>
+                  Clear
+                </button>
+              </div>
+            </section>
+
+            <section id="livePanel" class="panel">
+              <div class="section-title">
+                <h3>Live source</h3>
+                <span>Audio input</span>
+              </div>
+              <div class="field-row">
+                <label class="grow">
+                  Input device
+                  <select id="inputDevice"></select>
+                </label>
+                <button id="refreshDevicesBtn" class="secondary" type="button" title="Refresh available microphone and audio input devices">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 4v6h6" />
+                    <path d="M20 20v-6h-6" />
+                    <path d="M5 10a7 7 0 0 1 11.5-4.5" />
+                    <path d="M19 14a7 7 0 0 1-11.5 4.5" />
+                  </svg>
+                  Refresh
+                </button>
+              </div>
+              <div class="grid compact two">
+                <label>
+                  <span class="label-line">
+                    Tone Hz
+                    <span class="hint" title="Carrier tone frequency to demodulate from the selected input device.">?</span>
+                  </span>
+                  <input id="liveFreq" type="number" value="600" min="100" max="3000" step="10" />
+                </label>
+                <label>
+                  <span class="label-line">
+                    Target sample rate
+                    <span class="hint" title="Live audio will be resampled to this rate. Keep 8000.">?</span>
+                  </span>
+                  <input id="liveSampleRate" type="number" value="8000" min="4000" max="96000" step="1000" />
+                </label>
+              </div>
+              <div class="vu-shell" aria-label="Audio level placeholder">
+                <div class="vu-header">
+                  <span>VU</span>
+                  <strong id="vuStatus">not monitoring</strong>
+                </div>
+                <div class="vu-meter"><span id="vuLevelFill"></span></div>
+                <div class="level-readout">
+                  <span id="levelDb">-120.0 dBFS</span>
+                  <span id="levelPeak">peak 0.000</span>
+                  <span id="inputMeta">waiting</span>
+                </div>
+              </div>
+              <div class="spectrum-shell" aria-label="Live spectrum from 400 to 1000 Hz">
+                <div class="vu-header">
+                  <span>Spectrum 400-1000 Hz</span>
+                  <strong id="spectrumPeak">peak -- Hz</strong>
+                </div>
+                <canvas id="spectrumCanvas" width="320" height="96"></canvas>
+                <div class="spectrum-axis">
+                  <span>400</span>
+                  <span>700</span>
+                  <span>1000 Hz</span>
+                </div>
+              </div>
+              <div class="actions">
+                <button id="startLiveBtn" type="button" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 5v14l12-7z" />
+                  </svg>
+                  Start
+                </button>
+                <button id="stopLiveBtn" class="secondary" type="button" disabled>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M7 7h10v10H7z" />
+                  </svg>
+                  Stop
+                </button>
+                <button id="clearLiveBtn" class="secondary" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M5 12h14M8 8l-4 4 4 4M16 8l4 4-4 4" />
+                  </svg>
+                  Clear
+                </button>
+              </div>
+              <p class="note">Start monitors the selected input and decodes the rolling 6 second audio window.</p>
+            </section>
+          </section>
+
+          <section class="output">
+            <div class="output-header">
+              <div>
+                <h3>Transcript</h3>
+                <span id="summary">No decode yet</span>
+              </div>
+              <div class="transcript-tools" aria-label="Transcript display options">
+                <label class="switch">
+                  <input id="lowercaseToggle" type="checkbox" />
+                  <span>lowercase</span>
+                </label>
+                <label class="switch">
+                  <input id="lineBreakToggle" type="checkbox" checked />
+                  <span>breaks</span>
+                </label>
+                <label class="switch">
+                  <input id="callsignToggle" type="checkbox" checked />
+                  <span>QRZ</span>
+                </label>
+              </div>
+            </div>
+            <div id="transcript" class="transcript" aria-live="polite"></div>
+            <details class="raw-panel">
+              <summary>Raw runtime output</summary>
+              <pre id="rawOutput"></pre>
+            </details>
+          </section>
         </div>
-        <pre id="transcript"></pre>
-        <details class="raw-panel">
-          <summary>Runtime output</summary>
-          <pre id="rawOutput"></pre>
-        </details>
       </section>
     </main>
   </body>
