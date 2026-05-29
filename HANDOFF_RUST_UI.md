@@ -64,6 +64,27 @@ cd rust/morseformer-ui
 npm run build
 ```
 
+Build a Windows installer:
+
+```powershell
+cd rust\morseformer-ui
+npm run build:installer:windows
+```
+
+The installer script:
+
+- builds `rust\morseformer-rt` in release mode.
+- copies `morseformer-rt.exe` into the Tauri resource bundle.
+- copies any `onnxruntime*.dll` found beside the release build.
+- copies the default ONNX export from `build\onnx\rnnt_phase11b`.
+- runs `tauri build --bundles nsis`.
+
+Use a non-default model export with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ..\scripts\package-windows.ps1 -OnnxDir C:\path\to\rnnt_phase11b
+```
+
 The app currently has:
 
 - File decode tab.
@@ -136,9 +157,9 @@ Copy or regenerate ONNX export:
 
 ```text
 build\onnx\rnnt_phase11b\manifest.json
-build\onnx\rnnt_phase11b\encoder.onnx
-build\onnx\rnnt_phase11b\predictor_step.onnx
-build\onnx\rnnt_phase11b\joint.onnx
+build\onnx\rnnt_phase11b\rnnt_encoder.onnx
+build\onnx\rnnt_phase11b\rnnt_predictor_step.onnx
+build\onnx\rnnt_phase11b\rnnt_joint.onnx
 ```
 
 Build runtime:
@@ -180,7 +201,7 @@ High priority:
 
 1. Test Windows dev mode end to end.
 2. Confirm ONNX Runtime native dependencies on Windows.
-3. Package `morseformer-rt.exe` and ONNX assets with the Tauri app.
+3. Verify the Windows NSIS installer output end to end on a machine with Rust, Node.js, Visual Studio Build Tools, and the ONNX export available.
 4. Replace shelling out for live windows with an in-process Rust runtime or long-lived worker process.
 5. Add a stable live decode state machine with overlap, deduplication, and partial transcript handling.
 

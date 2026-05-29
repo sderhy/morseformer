@@ -18,6 +18,10 @@ venv/
 env/
 node_modules/
 rust/morseformer-ui/src-tauri/gen/
+rust/morseformer-ui/src-tauri/resources/morseformer-rt.exe
+rust/morseformer-ui/src-tauri/resources/onnxruntime*.dll
+rust/morseformer-ui/src-tauri/resources/DirectML.dll
+rust/morseformer-ui/src-tauri/resources/models/
 
 # Model checkpoints (released via HuggingFace Hub, not committed)
 *.pt

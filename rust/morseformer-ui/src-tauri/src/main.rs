@@ -10,6 +10,7 @@ use std::{
 };
 
 use serde::Serialize;
+use tauri::Manager;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -369,6 +370,7 @@ fn live_spectrum(state: tauri::State<'_, LiveCaptureState>) -> Result<SpectrumSl
 
 #[tauri::command]
 fn decode_live_window(
+    app: tauri::AppHandle,
     state: tauri::State<'_, LiveCaptureState>,
     onnx_dir: String,
     freq: f32,
@@ -376,7 +378,7 @@ fn decode_live_window(
     window_seconds: f32,
 ) -> Result<DecodeResult, String> {
     let repo_root = repo_root();
-    let onnx_dir = resolve_path(&repo_root, &onnx_dir);
+    let onnx_dir = resolve_onnx_dir(&app, &repo_root, &onnx_dir);
     let (samples, sample_rate, channels) = {
         let capture = state
             .capture
@@ -400,6 +402,7 @@ fn decode_live_window(
 
     let wav_path = write_temp_wav(&samples, sample_rate, channels)?;
     let result = run_runtime_decode_wav(
+        &app,
         &repo_root,
         wav_path.clone(),
         onnx_dir,
@@ -579,6 +582,7 @@ fn capture_input_level(device_id: String, duration_ms: Option<u64>) -> Result<Au
 
 #[tauri::command]
 fn decode_wav(
+    app: tauri::AppHandle,
     wav_path: String,
     onnx_dir: String,
     freq: f32,
@@ -591,9 +595,10 @@ fn decode_wav(
         return Err("WAV path is required".into());
     }
     let repo_root = repo_root();
-    let onnx_dir = resolve_path(&repo_root, &onnx_dir);
+    let onnx_dir = resolve_onnx_dir(&app, &repo_root, &onnx_dir);
     let wav_path = resolve_path(&repo_root, &wav_path);
     run_runtime_decode_wav(
+        &app,
         &repo_root,
         wav_path,
         onnx_dir,
@@ -606,6 +611,7 @@ fn decode_wav(
 }
 
 fn run_runtime_decode_wav(
+    app: &tauri::AppHandle,
     repo_root: &Path,
     wav_path: PathBuf,
     onnx_dir: PathBuf,
@@ -615,15 +621,24 @@ fn run_runtime_decode_wav(
     hop_seconds: f32,
     no_windowing: bool,
 ) -> Result<DecodeResult, String> {
-    let runtime_dir = repo_root.join("rust").join("morseformer-rt");
-    let runtime_bin = runtime_dir
+    let dev_runtime_dir = repo_root.join("rust").join("morseformer-rt");
+    let dev_runtime_bin = dev_runtime_dir
         .join("target")
         .join("debug")
         .join(executable_name("morseformer-rt"));
+    let runtime_bin = bundled_runtime_bin(app).unwrap_or(dev_runtime_bin);
+    let runtime_dir = runtime_bin
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| dev_runtime_dir.clone());
     if !runtime_bin.exists() {
         return Err(format!(
-            "runtime binary not found at {}. Build it with: cd rust/morseformer-rt && cargo build",
-            runtime_bin.display()
+            "runtime binary not found. Expected bundled runtime or dev binary at {}. Build dev runtime with: cd rust/morseformer-rt && cargo build",
+            dev_runtime_dir
+                .join("target")
+                .join("debug")
+                .join(executable_name("morseformer-rt"))
+                .display()
         ));
     }
 
@@ -867,6 +882,41 @@ fn resolve_path(repo_root: &Path, path: &str) -> PathBuf {
     } else {
         repo_root.join(path)
     }
+}
+
+fn resolve_onnx_dir(app: &tauri::AppHandle, repo_root: &Path, path: &str) -> PathBuf {
+    let requested = resolve_path(repo_root, path);
+    if requested.exists() {
+        return requested;
+    }
+
+    let trimmed = strip_file_url(path.trim()).replace('\\', "/");
+    if trimmed == "build/onnx/rnnt_phase11b" || trimmed.is_empty() {
+        if let Some(resource_root) = bundled_resource_root(app) {
+            let bundled = resource_root.join("models").join("rnnt_phase11b");
+            if bundled.exists() {
+                return bundled;
+            }
+        }
+    }
+
+    requested
+}
+
+fn bundled_runtime_bin(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let resource_root = bundled_resource_root(app)?;
+    let name = executable_name("morseformer-rt");
+    [
+        resource_root.join(&name),
+        resource_root.join("bin").join(&name),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn bundled_resource_root(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let root = app.path().resource_dir().ok()?.join("resources");
+    root.exists().then_some(root)
 }
 
 fn strip_file_url(path: &str) -> String {
