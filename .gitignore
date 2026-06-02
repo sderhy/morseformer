@@ -39,6 +39,9 @@ data/corpus/prose.txt
 # part of the repo history). The dated technical-debt HTML in reports/
 # remains tracked.
 reports/release_gate_*.json
+# Diagnostic spectrogram PNGs — derived from the gitignored *.wav
+# recordings, regenerable, and heavy. The markdown analysis is tracked.
+reports/**/*_spec.png
 
 # Phase 3.5+ FAV22-decoded artefacts (regenerable via scripts/decode_fav22.py
 # + scripts/align_fav22.py from a recorded fav22*.wav). The reference

@@ -151,6 +151,18 @@ def test_set_preset_with_unknown_name_emits_error_signal() -> None:
     assert "does-not-exist" in captured[-1]
 
 
+def test_worker_bandwidth_falls_back_to_preset_then_override() -> None:
+    # The streaming config should use the preset's bandwidth by default and
+    # the explicit override once set (mirrors the conf/digit override path).
+    from morseformer.gui.decoder_worker import DecoderWorker
+
+    w = DecoderWorker(device="cpu")
+    w.set_preset("contest")
+    assert w._streaming_config().bandwidth_hz == pytest.approx(100.0)
+    w.set_bandwidth_hz(60.0)
+    assert w._streaming_config().bandwidth_hz == pytest.approx(60.0)
+
+
 def test_cli_includes_gui_subcommand() -> None:
     from morseformer.cli import build_parser
 
@@ -198,6 +210,10 @@ def test_main_window_constructs_offscreen() -> None:
         assert win.settings.preset.currentText() == "live"
         assert win.settings.conf_thr.value() == pytest.approx(0.6)
         assert win.settings.digit_thr.value() == pytest.approx(0.9)
+        assert win.settings.bandwidth.value() == pytest.approx(200.0)
+        # Switching preset drives the BW field (contest narrows to 100 Hz).
+        win.settings.preset.setCurrentText("contest")
+        assert win.settings.bandwidth.value() == pytest.approx(100.0)
     finally:
         win.close()
         # Don't quit the application — pytest may have other tests using Qt.

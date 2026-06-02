@@ -21,8 +21,20 @@ Preset choice rationale:
   n-gram LM rescoring (lm_amateur_3gram, Phase 11 §C) for offline
   file decoding. The neural prose LM (lm_phase5_2) was dropped at
   v0.6.3 because it hurt amateur jargon on literary prose.
-- ``contest``: relaxed thresholds for fast contest-style exchanges
-  where missing a character is worse than emitting one wrongly.
+- ``contest``: relaxed thresholds *and* a narrow 100 Hz front-end
+  band-pass (vs the 200 Hz default) for dense contest passbands
+  with multiple adjacent CW signals. Narrowing was validated on a
+  CQ WPX CW recording set on 2026-05-31..06-02 (see
+  ``reports/wpx_diagnosis_2026_05_31/``): ``cwcwwDA1A`` goes from
+  inexploitable to a readable QSO. A factorial bandwidth×threshold
+  bench (2026-06-02) showed 100 Hz captures essentially all the
+  contest benefit (DA1A QSO recovered, ``cwcww5`` CQ de-hallucinated)
+  while bw=60 over-narrows: it costs +2.0 CER / +14.5 WER on the
+  real-OTA ``websdr-fav22`` clip and even re-hallucinates ``cwcww5``
+  (CMT). At 100 Hz the clean LCWO mean CER is unchanged (2.56) and
+  mean WER actually improves (8.89→8.77). A tighter 60 Hz remains
+  available via ``--bandwidth 60`` (CLI) or the BW field (GUI) for very
+  dense pile-ups, at the cost of some accuracy on isolated stations.
 - ``conservative``: tightened thresholds for very noisy bands where
   silence is preferable to a guess.
 """
@@ -47,6 +59,12 @@ class Preset:
     # Off by default; on for the ``prose`` preset where offline
     # readability is the primary goal.
     post_segment: bool = False
+    # Front-end band-pass width in Hz around the carrier. 200 Hz is the
+    # historical default (matches StreamingConfig). 100 Hz is enabled for
+    # the contest preset to reject adjacent stations in dense WPX-style
+    # passbands without over-narrowing (60 Hz regressed real-OTA clips);
+    # see project_wpx_diagnosis_2026_05_31 in memory.
+    bandwidth_hz: float = 200.0
 
 
 PRESETS: dict[str, Preset] = {
@@ -80,12 +98,16 @@ PRESETS: dict[str, Preset] = {
     "contest": Preset(
         name="contest",
         description="Looser thresholds for fast contest exchanges where "
-                    "missing characters costs more than rare false positives.",
+                    "missing characters costs more than rare false positives, "
+                    "and a narrow 100 Hz front-end band-pass to reject "
+                    "adjacent stations in dense WPX-style passbands "
+                    "(see reports/wpx_diagnosis_2026_05_31/).",
         acoustic="rnnt_phase11b",
         confidence_threshold=0.5,
         digit_threshold=0.80,
         lm=None,
         fusion_weight=0.0,
+        bandwidth_hz=100.0,
     ),
     "conservative": Preset(
         name="conservative",

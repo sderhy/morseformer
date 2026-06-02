@@ -24,6 +24,7 @@ class SettingsPanel(QWidget):
     confidence_threshold_changed = Signal(float)
     digit_threshold_changed = Signal(float)
     carrier_changed = Signal(float)
+    bandwidth_changed = Signal(float)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -72,6 +73,21 @@ class SettingsPanel(QWidget):
         self.carrier.valueChanged.connect(self._emit_carrier)
         layout.addWidget(self.carrier)
 
+        layout.addWidget(QLabel("BW (Hz):"))
+        self.bandwidth = QDoubleSpinBox()
+        # Front-end band-pass width around the carrier. Narrower rejects
+        # adjacent stations in dense passbands (contest preset → 100 Hz);
+        # below ~60 Hz it starts clipping a single station's sidebands.
+        self.bandwidth.setRange(30.0, 500.0)
+        self.bandwidth.setSingleStep(10.0)
+        self.bandwidth.setDecimals(0)
+        self.bandwidth.setToolTip(
+            "Front-end band-pass width around the carrier. Lower values "
+            "reject adjacent CW signals in dense / contest passbands."
+        )
+        self.bandwidth.valueChanged.connect(self._emit_bandwidth)
+        layout.addWidget(self.bandwidth)
+
         layout.addStretch(1)
 
         # Trigger initial population from the default preset.
@@ -84,11 +100,13 @@ class SettingsPanel(QWidget):
         self._building = True
         self.conf_thr.setValue(preset.confidence_threshold)
         self.digit_thr.setValue(preset.digit_threshold)
+        self.bandwidth.setValue(preset.bandwidth_hz)
         self._building = False
         # Emit in dependency order so the worker sees the preset first.
         self.preset_changed.emit(name)
         self.confidence_threshold_changed.emit(preset.confidence_threshold)
         self.digit_threshold_changed.emit(preset.digit_threshold)
+        self.bandwidth_changed.emit(preset.bandwidth_hz)
 
     def _emit_conf_thr(self, v: float) -> None:
         if self._building:
@@ -104,3 +122,8 @@ class SettingsPanel(QWidget):
         if self._building:
             return
         self.carrier_changed.emit(float(v))
+
+    def _emit_bandwidth(self, v: float) -> None:
+        if self._building:
+            return
+        self.bandwidth_changed.emit(float(v))

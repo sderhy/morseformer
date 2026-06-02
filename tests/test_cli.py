@@ -135,6 +135,18 @@ def test_contest_preset_loosens_thresholds() -> None:
     assert p.digit_threshold < get_preset("live").digit_threshold
 
 
+def test_contest_preset_uses_narrow_bandwidth() -> None:
+    """contest preset narrows the front-end BPF to 100 Hz to reject
+    adjacent stations in dense WPX-style passbands without over-narrowing
+    (60 Hz regressed real-OTA clips; validated on cwcwwDA1A.wav + factorial
+    bench 2026-05-31..06-02, see reports/wpx_diagnosis_2026_05_31/)."""
+    assert get_preset("contest").bandwidth_hz == 100.0
+    # other presets keep the conservative 200 Hz default
+    assert get_preset("live").bandwidth_hz == 200.0
+    assert get_preset("prose").bandwidth_hz == 200.0
+    assert get_preset("conservative").bandwidth_hz == 200.0
+
+
 def test_conservative_preset_tightens_thresholds() -> None:
     p = get_preset("conservative")
     assert p.confidence_threshold > get_preset("live").confidence_threshold

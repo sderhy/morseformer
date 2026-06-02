@@ -131,6 +131,7 @@ class DecoderWorker(QObject):
         # Settings overrides (applied on top of preset).
         self._confidence_threshold: float | None = None
         self._digit_threshold: float | None = None
+        self._bandwidth_hz: float | None = None
         self._carrier_hz: float = 600.0
         self._running = False
 
@@ -168,6 +169,10 @@ class DecoderWorker(QObject):
     @Slot(float)
     def set_carrier_hz(self, value: float) -> None:
         self._carrier_hz = float(value)
+
+    @Slot(float)
+    def set_bandwidth_hz(self, value: float) -> None:
+        self._bandwidth_hz = float(value)
 
     @Slot(object)
     def set_record_path(self, path: object) -> None:
@@ -357,4 +362,9 @@ class DecoderWorker(QObject):
                 else self._preset.digit_threshold
             ),
             carrier_hz=self._carrier_hz,
+            bandwidth_hz=(
+                self._bandwidth_hz
+                if self._bandwidth_hz is not None
+                else self._preset.bandwidth_hz
+            ),
         )

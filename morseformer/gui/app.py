@@ -190,6 +190,7 @@ class MainWindow(QMainWindow):
         self.settings.confidence_threshold_changed.connect(w.set_confidence_threshold)
         self.settings.digit_threshold_changed.connect(w.set_digit_threshold)
         self.settings.carrier_changed.connect(w.set_carrier_hz)
+        self.settings.bandwidth_changed.connect(w.set_bandwidth_hz)
 
         # Live tab ↔ worker. Routed via main-window signals so the QThread
         # call site stays explicit (auto-queued for cross-thread).

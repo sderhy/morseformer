@@ -27,6 +27,12 @@ def add_decode_parser(sub: argparse._SubParsersAction) -> None:
                    help="override the preset's LM. 'none' disables fusion.")
     p.add_argument("--device", default=None,
                    help="cpu / cuda / mps (default: auto)")
+    p.add_argument("--bandwidth", type=float, default=None,
+                   help="Front-end band-pass width in Hz around the "
+                        "carrier. Overrides the preset's bandwidth_hz "
+                        "(default 200 Hz for live/prose/conservative, "
+                        "100 Hz for contest). Try 60 for very dense "
+                        "pile-ups with adjacent CW signals.")
     seg = p.add_mutually_exclusive_group()
     seg.add_argument("--post-segment", dest="post_segment",
                      action="store_true", default=None,
@@ -63,14 +69,18 @@ def run_decode(args: argparse.Namespace) -> int:
     acoustic_path = resolve_model(acoustic_name)
     lm_path: Path | None = resolve_model(lm_name) if lm_name else None
 
+    bandwidth_hz = args.bandwidth if args.bandwidth is not None else preset.bandwidth_hz
+
     print(f"[morseformer] preset='{preset.name}'  acoustic={acoustic_name}"
-          + (f"  lm={lm_name} (λ={fusion_weight})" if lm_name else "  lm=off"))
+          + (f"  lm={lm_name} (λ={fusion_weight})" if lm_name else "  lm=off")
+          + f"  bandwidth={bandwidth_hz:.0f}Hz")
 
     forwarded = [
         str(args.audio),
         "--ckpt", str(acoustic_path),
         "--confidence-threshold", str(preset.confidence_threshold),
         "--digit-threshold", str(preset.digit_threshold),
+        "--bandwidth", str(bandwidth_hz),
     ]
     if lm_path is not None and fusion_weight > 0:
         forwarded += ["--lm-ckpt", str(lm_path),
