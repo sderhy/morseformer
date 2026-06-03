@@ -42,6 +42,8 @@ enum Command {
         wav: PathBuf,
         #[arg(long, default_value_t = 600.0)]
         freq: f32,
+        #[arg(long, default_value_t = 100.0)]
+        bandwidth: f32,
         #[arg(long, default_value_t = 8000)]
         target_sample_rate: usize,
         #[arg(long, default_value_t = 500)]
@@ -214,6 +216,7 @@ impl Runtime {
         self,
         path: PathBuf,
         freq: f32,
+        bandwidth: f32,
         target_sample_rate: usize,
         frame_rate: usize,
         window_seconds: f32,
@@ -227,7 +230,8 @@ impl Runtime {
         } else {
             resample_linear(&audio, sample_rate, target_sample_rate)
         };
-        let features = extract_cw_features(&audio, target_sample_rate, freq, frame_rate)?;
+        let features =
+            extract_cw_features(&audio, target_sample_rate, freq, bandwidth, frame_rate)?;
         if no_windowing || window_seconds <= 0.0 {
             self.greedy_decode(features.insert_axis(Axis(0)), max_emit_per_frame)
         } else {
@@ -539,6 +543,7 @@ fn main() -> Result<()> {
         Command::DecodeWav {
             wav,
             freq,
+            bandwidth,
             target_sample_rate,
             frame_rate,
             window_seconds,
@@ -548,6 +553,7 @@ fn main() -> Result<()> {
         } => runtime.decode_wav(
             wav,
             freq,
+            bandwidth,
             target_sample_rate,
             frame_rate,
             window_seconds,
@@ -602,6 +608,7 @@ fn extract_cw_features(
     audio: &[f32],
     sample_rate: usize,
     tone_freq: f32,
+    bandwidth: f32,
     frame_rate: usize,
 ) -> Result<ArrayD<f32>> {
     if frame_rate == 0 || sample_rate % frame_rate != 0 {
@@ -613,21 +620,39 @@ fn extract_cw_features(
     }
 
     let n_frames = audio.len() / hop;
+    let nyquist = sample_rate as f32 / 2.0;
+    if !tone_freq.is_finite() || tone_freq <= 0.0 || tone_freq >= nyquist {
+        anyhow::bail!("tone_freq={tone_freq} must be in (0, {nyquist}) Hz");
+    }
+    if !bandwidth.is_finite() || bandwidth <= 0.0 {
+        anyhow::bail!("bandwidth={bandwidth} must be positive");
+    }
+
+    let half_bandwidth = (bandwidth / 2.0).max(1.0);
+    let cutoff = half_bandwidth.min(nyquist - 1.0);
+    let rc = 1.0 / (2.0 * PI * cutoff);
+    let dt = 1.0 / sample_rate as f32;
+    let alpha = dt / (rc + dt);
+
+    let mut i_state = 0.0_f32;
+    let mut q_state = 0.0_f32;
+    let mut envelope = Vec::with_capacity(audio.len());
+    for (idx, sample) in audio.iter().copied().enumerate() {
+        let t = idx as f32 / sample_rate as f32;
+        let phase = 2.0 * PI * tone_freq * t;
+        let i_raw = 2.0 * sample * phase.cos();
+        let q_raw = -2.0 * sample * phase.sin();
+        i_state += alpha * (i_raw - i_state);
+        q_state += alpha * (q_raw - q_state);
+        envelope.push((i_state * i_state + q_state * q_state).sqrt());
+    }
+
     let mut features = Vec::with_capacity(n_frames);
     for frame_idx in 0..n_frames {
         let lo = frame_idx * hop;
         let hi = lo + hop;
-        let mut i_sum = 0.0_f32;
-        let mut q_sum = 0.0_f32;
-        for (offset, sample) in audio[lo..hi].iter().copied().enumerate() {
-            let t = (lo + offset) as f32 / sample_rate as f32;
-            let phase = 2.0 * PI * tone_freq * t;
-            i_sum += sample * phase.cos();
-            q_sum -= sample * phase.sin();
-        }
-        let scale = 2.0 / hop as f32;
-        let envelope = ((i_sum * scale).powi(2) + (q_sum * scale).powi(2)).sqrt();
-        features.push((envelope + 1e-6).ln());
+        let mean_envelope = envelope[lo..hi].iter().copied().sum::<f32>() / hop as f32;
+        features.push((mean_envelope + 1e-6).ln());
     }
     normalise(&mut features);
     Array::from_shape_vec(IxDyn(&[n_frames, 1]), features).context("building feature array")

@@ -1,6 +1,7 @@
 const wavPath = document.querySelector("#wavPath");
 const onnxDir = document.querySelector("#onnxDir");
 const freq = document.querySelector("#freq");
+const bandwidth = document.querySelector("#bandwidth");
 const sampleRate = document.querySelector("#sampleRate");
 const windowSeconds = document.querySelector("#windowSeconds");
 const hopSeconds = document.querySelector("#hopSeconds");
@@ -14,6 +15,7 @@ const copyBtn = document.querySelector("#copyBtn");
 const statusEl = document.querySelector("#status");
 const summary = document.querySelector("#summary");
 const transcript = document.querySelector("#transcript");
+const diagnosticsOutput = document.querySelector("#diagnosticsOutput");
 const rawOutput = document.querySelector("#rawOutput");
 const fileTabBtn = document.querySelector("#fileTabBtn");
 const liveTabBtn = document.querySelector("#liveTabBtn");
@@ -21,27 +23,41 @@ const filePanel = document.querySelector("#filePanel");
 const livePanel = document.querySelector("#livePanel");
 const modeTitle = document.querySelector("#modeTitle");
 const themeBtn = document.querySelector("#themeBtn");
-const themeLabel = document.querySelector("#themeLabel");
 const inputDevice = document.querySelector("#inputDevice");
 const refreshDevicesBtn = document.querySelector("#refreshDevicesBtn");
 const startLiveBtn = document.querySelector("#startLiveBtn");
 const stopLiveBtn = document.querySelector("#stopLiveBtn");
 const clearLiveBtn = document.querySelector("#clearLiveBtn");
 const liveFreq = document.querySelector("#liveFreq");
+const liveBandwidth = document.querySelector("#liveBandwidth");
 const liveSampleRate = document.querySelector("#liveSampleRate");
+const fileBandReadout = document.querySelector("#fileBandReadout");
+const liveBandReadout = document.querySelector("#liveBandReadout");
+const autoCenterToggle = document.querySelector("#autoCenterToggle");
 const vuStatus = document.querySelector("#vuStatus");
 const vuLevelFill = document.querySelector("#vuLevelFill");
 const levelDb = document.querySelector("#levelDb");
 const levelPeak = document.querySelector("#levelPeak");
 const inputMeta = document.querySelector("#inputMeta");
 const spectrumCanvas = document.querySelector("#spectrumCanvas");
-const spectrumPeak = document.querySelector("#spectrumPeak");
-const lowercaseToggle = document.querySelector("#lowercaseToggle");
-const lineBreakToggle = document.querySelector("#lineBreakToggle");
+const usePeakBtn = document.querySelector("#usePeakBtn");
+const prefsBtn = document.querySelector("#prefsBtn");
+const prefsPanel = document.querySelector("#prefsPanel");
+const caseSelect = document.querySelector("#caseSelect");
+const fontSelect = document.querySelector("#fontSelect");
+const fontSizeInput = document.querySelector("#fontSizeInput");
+const densitySelect = document.querySelector("#densitySelect");
+const breakK = document.querySelector("#breakK");
+const breakKN = document.querySelector("#breakKN");
+const breakSK = document.querySelector("#breakSK");
+const breakPlus = document.querySelector("#breakPlus");
+const breakEquals = document.querySelector("#breakEquals");
 const callsignToggle = document.querySelector("#callsignToggle");
+const qrzLoginBtn = document.querySelector("#qrzLoginBtn");
 
 const DEFAULT_ONNX_DIR = "build/onnx/rnnt_phase11b";
 const CALLSIGN_RE = /\b(?:[A-Z]{1,3}\d{1,2}[A-Z]{1,4}|\d[A-Z]{1,2}\d[A-Z]{1,4})\b/gi;
+const PREFS_KEY = "morseformer-transcript-prefs";
 
 let lastText = "";
 let lastRawOutput = "";
@@ -51,6 +67,7 @@ let liveDecodeTimer = null;
 let liveStatusRunning = false;
 let liveSpectrumRunning = false;
 let liveDecodeRunning = false;
+let lastPeakHz = null;
 
 function tauriApi() {
   return window.__TAURI__ || {};
@@ -64,6 +81,47 @@ function setSummary(value) {
   summary.textContent = value;
 }
 
+function setDiagnostics(lines) {
+  diagnosticsOutput.textContent = Array.isArray(lines) ? lines.join("\n") : String(lines || "");
+}
+
+function renderRuntimeStatus(status) {
+  setDiagnostics([
+    `runtime: ${status.runtimeMode || "unknown"} ${status.runtimeExists ? "OK" : "missing"}`,
+    status.runtimeBin || "",
+    `onnx: ${status.onnxExists ? "OK" : "missing"}`,
+    status.onnxDir || onnxDir.value.trim(),
+  ]);
+}
+
+function renderDecodeDiagnostics(result, mode) {
+  setDiagnostics([
+    `mode: ${mode}`,
+    `runtime: ${result.runtimeMode || "unknown"}`,
+    result.runtimeBin || "",
+    `onnx: ${result.onnxDir || onnxDir.value.trim()}`,
+    `wav: ${result.wavPath || wavPath.value.trim() || "live buffer"}`,
+    `freq: ${Math.round(Number(result.freq || 0))} Hz`,
+    `bandwidth: ${Math.round(Number(result.bandwidth || 0))} Hz`,
+    `sample rate: ${result.targetSampleRate || "?"} Hz`,
+    `window/hop: ${result.windowSeconds || "?"} / ${result.hopSeconds || "?"} s`,
+  ]);
+}
+
+async function refreshRuntimeStatus() {
+  const invoke = tauriApi().core?.invoke;
+  if (!invoke) {
+    setDiagnostics("Tauri runtime unavailable in static preview.");
+    return;
+  }
+  try {
+    const status = await invoke("runtime_status", { onnxDir: onnxDir.value.trim() });
+    renderRuntimeStatus(status);
+  } catch (error) {
+    setDiagnostics(String(error));
+  }
+}
+
 function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
@@ -73,12 +131,105 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+function currentPrefs() {
+  return {
+    caseMode: caseSelect.value,
+    fontFamily: fontSelect.value,
+    fontSize: Number(fontSizeInput.value),
+    density: densitySelect.value,
+    breakK: breakK.checked,
+    breakKN: breakKN.checked,
+    breakSK: breakSK.checked,
+    breakPlus: breakPlus.checked,
+    breakEquals: breakEquals.checked,
+    qrzLinks: callsignToggle.checked,
+  };
+}
+
+function savePrefs() {
+  localStorage.setItem(PREFS_KEY, JSON.stringify(currentPrefs()));
+}
+
+function loadPrefs() {
+  const defaults = {
+    caseMode: "original",
+    fontFamily: "mono",
+    fontSize: 18,
+    density: "comfortable",
+    breakK: true,
+    breakKN: true,
+    breakSK: true,
+    breakPlus: true,
+    breakEquals: true,
+    qrzLinks: true,
+  };
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem(PREFS_KEY) || "{}") };
+  } catch {
+    return defaults;
+  }
+}
+
+function applyPrefsToControls() {
+  const prefs = loadPrefs();
+  caseSelect.value = prefs.caseMode;
+  fontSelect.value = prefs.fontFamily;
+  fontSizeInput.value = String(clampNumber(Number(prefs.fontSize), 14, 28, 18));
+  densitySelect.value = prefs.density === "compact" ? "compact" : "comfortable";
+  breakK.checked = Boolean(prefs.breakK);
+  breakKN.checked = Boolean(prefs.breakKN);
+  breakSK.checked = Boolean(prefs.breakSK);
+  breakPlus.checked = Boolean(prefs.breakPlus);
+  breakEquals.checked = Boolean(prefs.breakEquals);
+  callsignToggle.checked = Boolean(prefs.qrzLinks);
+  applyTranscriptPrefs();
+}
+
+function transcriptFontFamily(value) {
+  if (value === "system") {
+    return 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+  }
+  if (value === "serif") {
+    return 'Georgia, "Times New Roman", serif';
+  }
+  return '"SFMono-Regular", Consolas, monospace';
+}
+
+function applyTranscriptPrefs() {
+  const size = clampNumber(Number(fontSizeInput.value), 14, 28, 18);
+  fontSizeInput.value = String(size);
+  transcript.style.fontFamily = transcriptFontFamily(fontSelect.value);
+  transcript.style.fontSize = `${size}px`;
+  transcript.classList.toggle("compact-density", densitySelect.value === "compact");
+}
+
+function breakAround(value, token) {
+  const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.replace(new RegExp(`\\s*${escaped}\\s*`, "g"), `\n${token}\n`);
+}
+
+function breakWord(value, word) {
+  return value.replace(new RegExp(`\\s+\\b${word}\\b\\s+`, "gi"), `\n${word}\n`);
+}
+
 function applyLineBreaks(value) {
-  return value
-    .replace(/\s*([=+])\s*/g, "\n$1\n")
-    .replace(/\s+\b(KN|SK|K)\b\s+/gi, "\n$1\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let out = value;
+  if (breakEquals.checked) {
+    out = breakAround(out, "=");
+  }
+  if (breakPlus.checked) {
+    out = breakAround(out, "+");
+  }
+  if (breakKN.checked) {
+    out = breakWord(out, "KN");
+  }
+  if (breakSK.checked) {
+    out = breakWord(out, "SK");
+  }
+  if (breakK.checked) {
+    out = breakWord(out, "K");
+  }
+  return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function linkCallsigns(value) {
@@ -90,11 +241,11 @@ function linkCallsigns(value) {
 
 function displayText() {
   let value = lastText || "";
-  if (lineBreakToggle.checked) {
-    value = applyLineBreaks(value);
-  }
-  if (lowercaseToggle.checked) {
+  value = applyLineBreaks(value);
+  if (caseSelect.value === "lower") {
     value = value.toLowerCase();
+  } else if (caseSelect.value === "upper") {
+    value = value.toUpperCase();
   }
   return value;
 }
@@ -146,7 +297,7 @@ function setLiveLevel(level) {
   levelDb.textContent = `${db.toFixed(1)} dBFS`;
   levelPeak.textContent = `peak ${peak.toFixed(3)}`;
   inputMeta.textContent = level?.samples
-    ? `${level.sampleRate} Hz · ${level.channels} ch · ${level.samples} samples`
+    ? `${level.sampleRate} Hz | ${level.channels} ch | ${level.samples} samples`
     : "no audio buffers";
 }
 
@@ -160,7 +311,9 @@ function resetSpectrum() {
   const ctx = spectrumCanvas.getContext("2d");
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--surface-3").trim() || "#edf1f5";
   ctx.fillRect(0, 0, spectrumCanvas.width, spectrumCanvas.height);
-  spectrumPeak.textContent = "peak -- Hz";
+  lastPeakHz = null;
+  usePeakBtn.textContent = "peak -- Hz";
+  usePeakBtn.disabled = true;
 }
 
 function spectrumColor(value) {
@@ -182,14 +335,44 @@ function drawSpectrumRow(spectrum) {
   if (!bins.length) {
     return;
   }
+  if (!spectrum.signal) {
+    drawBandOverlay(ctx, spectrum, width);
+    lastPeakHz = null;
+    usePeakBtn.textContent = "below threshold";
+    usePeakBtn.disabled = true;
+    return;
+  }
   const bandWidth = width / bins.length;
   bins.forEach((value, idx) => {
     const x = Math.floor(idx * bandWidth);
     const w = Math.max(1, Math.ceil(bandWidth));
     ctx.fillStyle = spectrumColor(value);
-    ctx.fillRect(x, 0, w, 2);
+    ctx.fillRect(x, 0, w, 1);
   });
-  spectrumPeak.textContent = `peak ${Math.round(spectrum.peakHz)} Hz`;
+  drawBandOverlay(ctx, spectrum, width);
+  lastPeakHz = Math.round(spectrum.peakHz);
+  if (autoCenterToggle.checked) {
+    applyPeakToLive(lastPeakHz, false, true);
+  }
+  usePeakBtn.textContent = `use ${lastPeakHz} Hz`;
+  usePeakBtn.disabled = false;
+}
+
+function drawBandOverlay(ctx, spectrum, width) {
+  const minHz = Number(spectrum?.minHz ?? 400);
+  const maxHz = Number(spectrum?.maxHz ?? 800);
+  const span = Math.max(1, maxHz - minHz);
+  const center = Number(liveFreq.value);
+  const bw = clampBandwidth(Number(liveBandwidth.value));
+  const low = center - bw / 2;
+  const high = center + bw / 2;
+  const x1 = Math.max(0, Math.min(width, ((low - minHz) / span) * width));
+  const x2 = Math.max(0, Math.min(width, ((high - minHz) / span) * width));
+  if (x2 <= 0 || x1 >= width || x2 <= x1) {
+    return;
+  }
+  ctx.fillStyle = "rgba(23, 105, 224, 0.22)";
+  ctx.fillRect(Math.floor(x1), 0, Math.max(1, Math.ceil(x2 - x1)), 1);
 }
 
 function setTab(mode) {
@@ -207,6 +390,7 @@ function commandPayload() {
     wavPath: wavPath.value.trim(),
     onnxDir: onnxDir.value.trim(),
     freq: Number(freq.value),
+    bandwidth: clampBandwidth(Number(bandwidth.value)),
     targetSampleRate: Number(sampleRate.value),
     windowSeconds: Number(windowSeconds.value),
     hopSeconds: Number(hopSeconds.value),
@@ -214,10 +398,73 @@ function commandPayload() {
   };
 }
 
+function clampNumber(value, min, max, fallback) {
+  const numeric = Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, numeric));
+}
+
+function clampBandwidth(value) {
+  const numeric = Number.isFinite(value) ? value : 100;
+  return Math.min(400, Math.max(100, numeric));
+}
+
+function normalizeBandwidthInput(input) {
+  input.value = String(clampBandwidth(Number(input.value)));
+}
+
+function updateTuneReadouts() {
+  const fileFreq = clampNumber(Number(freq.value), 100, 3000, 600);
+  const fileBw = clampBandwidth(Number(bandwidth.value));
+  const liveCenter = clampNumber(Number(liveFreq.value), 100, 3000, 600);
+  const liveBw = clampBandwidth(Number(liveBandwidth.value));
+  fileBandReadout.textContent = `${Math.round(fileFreq)} Hz | BW ${Math.round(fileBw)} Hz (${Math.round(fileFreq - fileBw / 2)}-${Math.round(fileFreq + fileBw / 2)})`;
+  liveBandReadout.textContent = `${Math.round(liveCenter)} Hz | BW ${Math.round(liveBw)} Hz (${Math.round(liveCenter - liveBw / 2)}-${Math.round(liveCenter + liveBw / 2)})`;
+}
+
+function stepNumberInput(targetId, step) {
+  const input = document.querySelector(`#${targetId}`);
+  if (!input) {
+    return;
+  }
+  const min = Number(input.min || -Infinity);
+  const max = Number(input.max || Infinity);
+  const current = Number(input.value || 0);
+  input.value = String(clampNumber(current + step, min, max, current));
+  if (targetId === "bandwidth" || targetId === "liveBandwidth") {
+    normalizeBandwidthInput(input);
+  }
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function setBandwidth(targetId, value) {
+  const input = document.querySelector(`#${targetId}`);
+  if (!input) {
+    return;
+  }
+  input.value = String(clampBandwidth(Number(value)));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function applyPeakToLive(value, mirrorFile, silent = false) {
+  if (!value) {
+    return;
+  }
+  liveFreq.value = String(value);
+  if (mirrorFile) {
+    freq.value = String(value);
+  }
+  updateTuneReadouts();
+  if (!silent) {
+    setStatus(`center set to ${value} Hz`);
+  }
+}
+
 function applyTheme(theme) {
   const next = theme === "dark" ? "dark" : "light";
   document.documentElement.dataset.theme = next;
-  themeLabel.textContent = next === "dark" ? "Light mode" : "Dark mode";
+  const label = next === "dark" ? "Switch light mode" : "Switch dark mode";
+  themeBtn.title = label;
+  themeBtn.setAttribute("aria-label", label);
   localStorage.setItem("morseformer-theme", next);
 }
 
@@ -246,7 +493,10 @@ browseBtn.addEventListener("click", async () => {
 resetModelBtn.addEventListener("click", () => {
   onnxDir.value = DEFAULT_ONNX_DIR;
   setStatus("model path reset");
+  refreshRuntimeStatus();
 });
+
+onnxDir.addEventListener("change", refreshRuntimeStatus);
 
 clearBtn.addEventListener("click", () => clearOutput("idle"));
 clearAllBtn.addEventListener("click", () => clearOutput("idle"));
@@ -268,9 +518,88 @@ themeBtn.addEventListener("click", () => {
   applyTheme(current === "dark" ? "light" : "dark");
 });
 
-for (const control of [lowercaseToggle, lineBreakToggle, callsignToggle]) {
-  control.addEventListener("change", renderTranscript);
+prefsBtn.addEventListener("click", () => {
+  prefsPanel.hidden = !prefsPanel.hidden;
+});
+
+document.addEventListener("click", (event) => {
+  if (prefsPanel.hidden) {
+    return;
+  }
+  if (prefsPanel.contains(event.target) || prefsBtn.contains(event.target)) {
+    return;
+  }
+  prefsPanel.hidden = true;
+});
+
+for (const control of [caseSelect, fontSelect, fontSizeInput, densitySelect, breakK, breakKN, breakSK, breakPlus, breakEquals, callsignToggle]) {
+  control.addEventListener("change", () => {
+    applyTranscriptPrefs();
+    savePrefs();
+    renderTranscript();
+  });
 }
+
+for (const control of [freq, bandwidth, liveFreq, liveBandwidth]) {
+  control.addEventListener("change", () => {
+    if (control === bandwidth || control === liveBandwidth) {
+      normalizeBandwidthInput(control);
+    }
+    updateTuneReadouts();
+  });
+}
+
+document.querySelectorAll(".step-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    stepNumberInput(button.dataset.target, Number(button.dataset.step || 0));
+  });
+});
+
+document.querySelectorAll(".preset-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    setBandwidth(button.dataset.bandwidthTarget, Number(button.dataset.bandwidth));
+  });
+});
+
+qrzLoginBtn.addEventListener("click", async () => {
+  const invoke = tauriApi().core?.invoke;
+  const url = "https://www.qrz.com/login";
+  if (!invoke) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  try {
+    await invoke("open_external_url", { url });
+    setStatus("opened QRZ login");
+  } catch (error) {
+    setOutput(String(error), lastRawOutput);
+    setStatus("QRZ login error");
+  }
+});
+
+usePeakBtn.addEventListener("click", () => {
+  applyPeakToLive(lastPeakHz, true);
+});
+
+transcript.addEventListener("click", async (event) => {
+  const link = event.target.closest("a[href]");
+  if (!link) {
+    return;
+  }
+  event.preventDefault();
+  const invoke = tauriApi().core?.invoke;
+  if (!invoke) {
+    window.open(link.href, "_blank", "noopener,noreferrer");
+    return;
+  }
+  try {
+    await invoke("open_external_url", { url: link.href });
+    setStatus("opened link");
+  } catch (error) {
+    setOutput(String(error), lastRawOutput);
+    setStatus("link error");
+  }
+});
 
 async function refreshInputDevices() {
   const invoke = tauriApi().core?.invoke;
@@ -369,13 +698,15 @@ async function decodeLiveWindow() {
     const result = await invoke("decode_live_window", {
       onnxDir: onnxDir.value.trim(),
       freq: Number(liveFreq.value),
+      bandwidth: clampBandwidth(Number(liveBandwidth.value)),
       targetSampleRate: Number(liveSampleRate.value),
       windowSeconds: 6,
     });
     rawOutput.textContent = result.rawOutput || "";
+    renderDecodeDiagnostics(result, "live");
     if (result.text) {
       appendLiveText(result.text);
-      setSummary(`Live decode · ${result.frames} frames`);
+      setSummary(`Live decode | ${result.frames} frames`);
     } else {
       setSummary("Live decode running, no symbols yet");
     }
@@ -492,7 +823,8 @@ decodeBtn.addEventListener("click", async () => {
     }
     const result = await invoke("decode_wav", payload);
     setOutput(result.text || "", result.rawOutput || "");
-    setStatus(`${result.frames} frames · ${result.chunks} chunks`);
+    renderDecodeDiagnostics(result, "file");
+    setStatus(`${result.frames} frames | ${result.chunks} chunks`);
     setSummary(result.text ? "Decode complete" : "Decode complete, empty transcript");
   } catch (error) {
     setOutput(String(error), String(error));
@@ -506,7 +838,10 @@ decodeBtn.addEventListener("click", async () => {
 const savedTheme = localStorage.getItem("morseformer-theme");
 const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)").matches;
 applyTheme(savedTheme || (prefersDark ? "dark" : "light"));
+applyPrefsToControls();
+updateTuneReadouts();
 renderTranscript();
 resetLiveLevel();
 resetSpectrum();
 refreshInputDevices();
+refreshRuntimeStatus();

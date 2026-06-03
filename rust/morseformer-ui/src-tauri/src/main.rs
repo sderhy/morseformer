@@ -27,6 +27,26 @@ struct DecodeResult {
     frames: usize,
     chunks: usize,
     raw_output: String,
+    runtime_bin: String,
+    runtime_mode: String,
+    onnx_dir: String,
+    wav_path: String,
+    freq: f32,
+    bandwidth: f32,
+    target_sample_rate: usize,
+    window_seconds: f32,
+    hop_seconds: f32,
+    no_windowing: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RuntimeStatus {
+    runtime_bin: String,
+    runtime_mode: String,
+    runtime_exists: bool,
+    onnx_dir: String,
+    onnx_exists: bool,
 }
 
 #[derive(Default)]
@@ -58,6 +78,7 @@ struct SpectrumSlice {
     bins: Vec<f32>,
     peak_hz: f32,
     peak: f32,
+    signal: bool,
 }
 
 #[derive(Default)]
@@ -363,9 +384,60 @@ fn live_spectrum(state: tauri::State<'_, LiveCaptureState>) -> Result<SpectrumSl
         &mono,
         capture.sample_rate,
         400.0,
-        1000.0,
+        800.0,
         10.0,
     ))
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("only http and https links can be opened".to_string());
+    }
+    if url.chars().any(char::is_control) {
+        return Err("invalid link".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = Command::new("rundll32");
+        command.args(["url.dll,FileProtocolHandler", url]);
+        command
+    };
+
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = Command::new("open");
+        command.arg(url);
+        command
+    };
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|err| format!("failed to open link: {err}"))
+}
+
+#[tauri::command]
+fn runtime_status(app: tauri::AppHandle, onnx_dir: String) -> Result<RuntimeStatus, String> {
+    let repo_root = repo_root();
+    let onnx_dir = resolve_onnx_dir(&app, &repo_root, &onnx_dir);
+    let (runtime_bin, runtime_mode) = resolve_runtime_bin(&app, &repo_root);
+    Ok(RuntimeStatus {
+        runtime_exists: runtime_bin.exists(),
+        runtime_bin: runtime_bin.display().to_string(),
+        runtime_mode,
+        onnx_exists: onnx_dir.exists(),
+        onnx_dir: onnx_dir.display().to_string(),
+    })
 }
 
 #[tauri::command]
@@ -374,6 +446,7 @@ fn decode_live_window(
     state: tauri::State<'_, LiveCaptureState>,
     onnx_dir: String,
     freq: f32,
+    bandwidth: f32,
     target_sample_rate: usize,
     window_seconds: f32,
 ) -> Result<DecodeResult, String> {
@@ -407,6 +480,7 @@ fn decode_live_window(
         wav_path.clone(),
         onnx_dir,
         freq,
+        clamp_bandwidth(bandwidth),
         target_sample_rate,
         window_seconds,
         window_seconds,
@@ -586,6 +660,7 @@ fn decode_wav(
     wav_path: String,
     onnx_dir: String,
     freq: f32,
+    bandwidth: f32,
     target_sample_rate: usize,
     window_seconds: f32,
     hop_seconds: f32,
@@ -603,6 +678,7 @@ fn decode_wav(
         wav_path,
         onnx_dir,
         freq,
+        clamp_bandwidth(bandwidth),
         target_sample_rate,
         window_seconds,
         hop_seconds,
@@ -616,17 +692,14 @@ fn run_runtime_decode_wav(
     wav_path: PathBuf,
     onnx_dir: PathBuf,
     freq: f32,
+    bandwidth: f32,
     target_sample_rate: usize,
     window_seconds: f32,
     hop_seconds: f32,
     no_windowing: bool,
 ) -> Result<DecodeResult, String> {
     let dev_runtime_dir = repo_root.join("rust").join("morseformer-rt");
-    let dev_runtime_bin = dev_runtime_dir
-        .join("target")
-        .join("debug")
-        .join(executable_name("morseformer-rt"));
-    let runtime_bin = bundled_runtime_bin(app).unwrap_or(dev_runtime_bin);
+    let (runtime_bin, runtime_mode) = resolve_runtime_bin(app, repo_root);
     let runtime_dir = runtime_bin
         .parent()
         .map(Path::to_path_buf)
@@ -649,6 +722,8 @@ fn run_runtime_decode_wav(
         wav_path.display().to_string(),
         "--freq".to_string(),
         freq.to_string(),
+        "--bandwidth".to_string(),
+        bandwidth.to_string(),
         "--target-sample-rate".to_string(),
         target_sample_rate.to_string(),
         "--window-seconds".to_string(),
@@ -681,7 +756,33 @@ fn run_runtime_decode_wav(
             .and_then(|v| v.parse().ok())
             .unwrap_or(1),
         raw_output: stdout,
+        runtime_bin: runtime_bin.display().to_string(),
+        runtime_mode,
+        onnx_dir: onnx_dir.display().to_string(),
+        wav_path: wav_path.display().to_string(),
+        freq,
+        bandwidth,
+        target_sample_rate,
+        window_seconds,
+        hop_seconds,
+        no_windowing,
     })
+}
+
+fn resolve_runtime_bin(app: &tauri::AppHandle, repo_root: &Path) -> (PathBuf, String) {
+    let dev_runtime_bin = repo_root
+        .join("rust")
+        .join("morseformer-rt")
+        .join("target")
+        .join("debug")
+        .join(executable_name("morseformer-rt"));
+    if cfg!(debug_assertions) && dev_runtime_bin.exists() {
+        return (dev_runtime_bin, "dev-debug".to_string());
+    }
+    if let Some(path) = bundled_runtime_bin(app) {
+        return (path, "bundled".to_string());
+    }
+    (dev_runtime_bin, "dev-missing".to_string())
 }
 
 fn push_live_samples(samples: impl Iterator<Item = f32>, shared: &Arc<Mutex<LiveShared>>) {
@@ -735,6 +836,7 @@ fn narrowband_spectrum(
             bins: Vec::new(),
             peak_hz: min_hz,
             peak: 0.0,
+            signal: false,
         };
     }
 
@@ -762,9 +864,14 @@ fn narrowband_spectrum(
         bins.push(magnitude);
         hz += step_hz;
     }
-    let normaliser = peak.max(1e-6);
+    let signal_floor = 0.0006_f32;
+    let display_reference = 0.035_f32;
+    let signal = peak >= signal_floor;
     for bin in &mut bins {
-        *bin = (*bin / normaliser).sqrt().clamp(0.0, 1.0);
+        let gated = (*bin - signal_floor).max(0.0);
+        *bin = (gated / (display_reference - signal_floor))
+            .sqrt()
+            .clamp(0.0, 1.0);
     }
 
     SpectrumSlice {
@@ -775,6 +882,15 @@ fn narrowband_spectrum(
         bins,
         peak_hz,
         peak,
+        signal,
+    }
+}
+
+fn clamp_bandwidth(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(100.0, 400.0)
+    } else {
+        100.0
     }
 }
 
@@ -980,6 +1096,8 @@ fn main() {
             list_input_devices,
             live_input_status,
             live_spectrum,
+            open_external_url,
+            runtime_status,
             start_live_capture,
             stop_live_capture
         ])

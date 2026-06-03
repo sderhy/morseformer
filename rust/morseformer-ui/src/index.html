@@ -9,55 +9,33 @@
   </head>
   <body>
     <main class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" role="img">
-              <path d="M4 14.5h3.2l1.4-5 3.2 10 2.7-15 2.1 10H20" />
-            </svg>
-          </div>
-          <div>
-            <h1>Morseformer</h1>
-            <p>Rust / ONNX decoder</p>
-          </div>
-        </div>
-
-        <nav class="mode-nav" aria-label="Decode mode">
-          <button id="fileTabBtn" class="nav-item active" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h3l2 2h5A2.5 2.5 0 0 1 19 8.5v8A2.5 2.5 0 0 1 16.5 19h-10A2.5 2.5 0 0 1 4 16.5z" />
-            </svg>
-            File
-          </button>
-          <button id="liveTabBtn" class="nav-item" type="button">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 4v16M8 8v8M16 8v8M4 11v2M20 11v2" />
-            </svg>
-            Live
-          </button>
-        </nav>
-
-        <div class="sidebar-footer">
-          <button id="themeBtn" class="icon-button wide" type="button" title="Switch light or dark mode">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M12 3a6.8 6.8 0 1 0 6.6 8.4A5.4 5.4 0 0 1 12 3z" />
-            </svg>
-            <span id="themeLabel">Dark mode</span>
-          </button>
-          <div class="status-card">
-            <span class="status-dot" aria-hidden="true"></span>
-            <span id="status">idle</span>
-          </div>
-        </div>
-      </aside>
-
       <section class="workspace">
         <header class="workspace-header">
-          <div>
-            <p class="eyebrow">Developer preview</p>
-            <h2 id="modeTitle">WAV file decode</h2>
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 24 24" role="img">
+                <path d="M4 14.5h3.2l1.4-5 3.2 10 2.7-15 2.1 10H20" />
+              </svg>
+            </div>
+            <div>
+              <h1>Morseformer</h1>
+              <p>Rust / ONNX decoder</p>
+            </div>
           </div>
           <div class="header-actions">
+            <div class="status-card">
+              <span class="status-dot" aria-hidden="true"></span>
+              <span id="status">idle</span>
+            </div>
+            <button id="themeBtn" class="secondary icon-only" type="button" title="Switch dark mode" aria-label="Switch dark mode">
+              <svg id="themeIconMoon" viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3a6.8 6.8 0 1 0 6.6 8.4A5.4 5.4 0 0 1 12 3z" />
+              </svg>
+              <svg id="themeIconSun" viewBox="0 0 24 24" aria-hidden="true">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2.8v2.1M12 19.1v2.1M4.9 4.9l1.5 1.5M17.6 17.6l1.5 1.5M2.8 12h2.1M19.1 12h2.1M4.9 19.1l1.5-1.5M17.6 6.4l1.5-1.5" />
+              </svg>
+            </button>
             <button id="copyBtn" class="secondary small" type="button" title="Copy transcript">
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path d="M8 8h10v12H8z" />
@@ -76,6 +54,23 @@
 
         <div class="content-grid">
           <section class="control-stack" aria-label="Decode controls">
+            <div class="control-header">
+              <h2 id="modeTitle">WAV file decode</h2>
+              <nav class="mode-nav" aria-label="Decode mode">
+                <button id="fileTabBtn" class="nav-item active" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h3l2 2h5A2.5 2.5 0 0 1 19 8.5v8A2.5 2.5 0 0 1 16.5 19h-10A2.5 2.5 0 0 1 4 16.5z" />
+                  </svg>
+                  File
+                </button>
+                <button id="liveTabBtn" class="nav-item" type="button">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M12 4v16M8 8v8M16 8v8M4 11v2M20 11v2" />
+                  </svg>
+                  Live
+                </button>
+              </nav>
+            </div>
             <section id="filePanel" class="panel active">
               <div class="section-title">
                 <h3>File source</h3>
@@ -107,16 +102,45 @@
                 </button>
               </div>
 
-              <details class="advanced-controls">
-                <summary>Advanced decode settings</summary>
+              <div class="tuning-panel">
+                <div class="section-title">
+                  <h3>DSP tuning</h3>
+                  <span id="fileBandReadout">600 Hz | BW 100 Hz</span>
+                </div>
                 <div class="grid compact">
                   <label>
                     <span class="label-line">
                       Tone Hz
                       <span class="hint" title="Carrier tone frequency to demodulate. Most current Morseformer examples use 600 Hz.">?</span>
                     </span>
-                    <input id="freq" type="number" value="600" min="100" max="3000" step="10" />
+                    <div class="number-stepper">
+                      <button class="step-btn secondary" type="button" data-target="freq" data-step="-10" title="Decrease tone">-</button>
+                      <input id="freq" type="number" value="600" min="100" max="3000" step="10" />
+                      <button class="step-btn secondary" type="button" data-target="freq" data-step="10" title="Increase tone">+</button>
+                    </div>
                   </label>
+                  <label>
+                    <span class="label-line">
+                      Bandwidth Hz
+                      <span class="hint" title="Demodulation bandwidth centered on Tone Hz. 100 Hz means +/- 50 Hz.">?</span>
+                    </span>
+                    <div class="number-stepper">
+                      <button class="step-btn secondary" type="button" data-target="bandwidth" data-step="-10" title="Decrease bandwidth">-</button>
+                      <input id="bandwidth" type="number" value="100" min="100" max="400" step="10" />
+                      <button class="step-btn secondary" type="button" data-target="bandwidth" data-step="10" title="Increase bandwidth">+</button>
+                    </div>
+                  </label>
+                </div>
+                <div class="preset-row" aria-label="Bandwidth presets">
+                  <button class="secondary preset-btn" type="button" data-bandwidth-target="bandwidth" data-bandwidth="100">Narrow 100</button>
+                  <button class="secondary preset-btn" type="button" data-bandwidth-target="bandwidth" data-bandwidth="200">Medium 200</button>
+                  <button class="secondary preset-btn" type="button" data-bandwidth-target="bandwidth" data-bandwidth="400">Wide 400</button>
+                </div>
+              </div>
+
+              <details class="advanced-controls">
+                <summary>Advanced decode settings</summary>
+                <div class="grid compact">
                   <label>
                     <span class="label-line">
                       Target sample rate
@@ -181,14 +205,45 @@
                   Refresh
                 </button>
               </div>
+
+              <div class="tuning-panel">
+                <div class="section-title">
+                  <h3>DSP tuning</h3>
+                  <span id="liveBandReadout">600 Hz | BW 100 Hz</span>
+                </div>
+                <div class="grid compact">
+                  <label>
+                    <span class="label-line">
+                      Tone Hz
+                      <span class="hint" title="Carrier tone frequency to demodulate from the selected input device.">?</span>
+                    </span>
+                    <div class="number-stepper">
+                      <button class="step-btn secondary" type="button" data-target="liveFreq" data-step="-10" title="Decrease tone">-</button>
+                      <input id="liveFreq" type="number" value="600" min="100" max="3000" step="10" />
+                      <button class="step-btn secondary" type="button" data-target="liveFreq" data-step="10" title="Increase tone">+</button>
+                    </div>
+                  </label>
+                  <label>
+                    <span class="label-line">
+                      Bandwidth Hz
+                      <span class="hint" title="Live demodulation bandwidth centered on Tone Hz. Range: 100 to 400 Hz.">?</span>
+                    </span>
+                    <div class="number-stepper">
+                      <button class="step-btn secondary" type="button" data-target="liveBandwidth" data-step="-10" title="Decrease bandwidth">-</button>
+                      <input id="liveBandwidth" type="number" value="100" min="100" max="400" step="10" />
+                      <button class="step-btn secondary" type="button" data-target="liveBandwidth" data-step="10" title="Increase bandwidth">+</button>
+                    </div>
+                  </label>
+                </div>
+                <div class="preset-row" aria-label="Live bandwidth presets">
+                  <button class="secondary preset-btn" type="button" data-bandwidth-target="liveBandwidth" data-bandwidth="100">Narrow 100</button>
+                  <button class="secondary preset-btn" type="button" data-bandwidth-target="liveBandwidth" data-bandwidth="200">Medium 200</button>
+                  <button class="secondary preset-btn" type="button" data-bandwidth-target="liveBandwidth" data-bandwidth="400">Wide 400</button>
+                </div>
+                <label class="check compact-check"><input id="autoCenterToggle" type="checkbox" /><span>Auto-center from spectrum peak</span></label>
+              </div>
+
               <div class="grid compact two">
-                <label>
-                  <span class="label-line">
-                    Tone Hz
-                    <span class="hint" title="Carrier tone frequency to demodulate from the selected input device.">?</span>
-                  </span>
-                  <input id="liveFreq" type="number" value="600" min="100" max="3000" step="10" />
-                </label>
                 <label>
                   <span class="label-line">
                     Target sample rate
@@ -209,16 +264,18 @@
                   <span id="inputMeta">waiting</span>
                 </div>
               </div>
-              <div class="spectrum-shell" aria-label="Live spectrum from 400 to 1000 Hz">
+              <div class="spectrum-shell" aria-label="Live spectrum from 400 to 800 Hz">
                 <div class="vu-header">
-                  <span>Spectrum 400-1000 Hz</span>
-                  <strong id="spectrumPeak">peak -- Hz</strong>
+                  <span>Spectrum 400-800 Hz</span>
+                  <button id="usePeakBtn" class="secondary micro" type="button" disabled title="Use the detected spectrum peak as Tone Hz">
+                    peak -- Hz
+                  </button>
                 </div>
-                <canvas id="spectrumCanvas" width="320" height="96"></canvas>
+                <canvas id="spectrumCanvas" width="320" height="72"></canvas>
                 <div class="spectrum-axis">
                   <span>400</span>
-                  <span>700</span>
-                  <span>1000 Hz</span>
+                  <span>600</span>
+                  <span>800 Hz</span>
                 </div>
               </div>
               <div class="actions">
@@ -252,21 +309,58 @@
                 <span id="summary">No decode yet</span>
               </div>
               <div class="transcript-tools" aria-label="Transcript display options">
-                <label class="switch">
-                  <input id="lowercaseToggle" type="checkbox" />
-                  <span>lowercase</span>
-                </label>
-                <label class="switch">
-                  <input id="lineBreakToggle" type="checkbox" checked />
-                  <span>breaks</span>
-                </label>
-                <label class="switch">
-                  <input id="callsignToggle" type="checkbox" checked />
-                  <span>QRZ</span>
-                </label>
+                <button id="prefsBtn" class="secondary icon-only" type="button" title="Transcript preferences" aria-label="Transcript preferences">
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3 1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8 1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.5 1z" />
+                  </svg>
+                </button>
+                <div id="prefsPanel" class="prefs-panel" hidden>
+                  <label>
+                    Text case
+                    <select id="caseSelect">
+                      <option value="original">Original</option>
+                      <option value="upper">Uppercase</option>
+                      <option value="lower">Lowercase</option>
+                    </select>
+                  </label>
+                  <label>
+                    Font
+                    <select id="fontSelect">
+                      <option value="mono">Monospace</option>
+                      <option value="system">System</option>
+                      <option value="serif">Serif</option>
+                    </select>
+                  </label>
+                  <label>
+                    Font size
+                    <input id="fontSizeInput" type="number" value="18" min="14" max="28" step="1" />
+                  </label>
+                  <label>
+                    Density
+                    <select id="densitySelect">
+                      <option value="comfortable">Comfortable</option>
+                      <option value="compact">Compact</option>
+                    </select>
+                  </label>
+                  <div class="prefs-group">
+                    <span>Line breaks</span>
+                    <label class="check compact-check"><input id="breakK" type="checkbox" checked /><span>K</span></label>
+                    <label class="check compact-check"><input id="breakKN" type="checkbox" checked /><span>KN</span></label>
+                    <label class="check compact-check"><input id="breakSK" type="checkbox" checked /><span>SK</span></label>
+                    <label class="check compact-check"><input id="breakPlus" type="checkbox" checked /><span>+</span></label>
+                    <label class="check compact-check"><input id="breakEquals" type="checkbox" checked /><span>=</span></label>
+                  </div>
+                  <label class="check compact-check"><input id="callsignToggle" type="checkbox" checked /><span>QRZ callsign links</span></label>
+                  <button id="qrzLoginBtn" class="secondary" type="button">Open QRZ login</button>
+                </div>
               </div>
             </div>
             <div id="transcript" class="transcript" aria-live="polite"></div>
+            <details class="diagnostic-panel">
+              <summary>Diagnostics</summary>
+              <pre id="diagnosticsOutput">Waiting for runtime status...</pre>
+            </details>
             <details class="raw-panel">
               <summary>Raw runtime output</summary>
               <pre id="rawOutput"></pre>
