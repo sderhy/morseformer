@@ -286,12 +286,63 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+def _is_wsl() -> bool:
+    """True when running under WSL (``microsoft`` in /proc/version)."""
+    try:
+        return "microsoft" in Path("/proc/version").read_text().lower()
+    except OSError:
+        return False
+
+
+def _configure_qt_platform() -> None:
+    """Pick a reliable Qt platform backend under WSLg.
+
+    On WSL2 the WSLg compositor exposes both an X11 ``DISPLAY`` and a
+    Wayland socket, so Qt auto-selects its ``wayland`` plugin — which is
+    flaky under WSLg (shared-buffer "copy mode" warnings, windows that
+    never appear). The ``xcb`` (X11) backend is far more stable, but Qt
+    6.5+ refuses to load it without ``libxcb-cursor0`` installed.
+
+    Strategy (only when the user has not pinned ``QT_QPA_PLATFORM``):
+    - not WSL → do nothing, trust Qt's auto-pick.
+    - WSL + ``libxcb-cursor`` present → prefer ``xcb``, fall back to
+      ``wayland`` via Qt's ``;``-separated platform list.
+    - WSL + lib missing → stay on wayland but print a one-line hint so
+      the user can install the package for a stable GUI.
+    """
+    import os
+    from ctypes.util import find_library
+
+    if os.environ.get("QT_QPA_PLATFORM"):
+        return  # user override wins.
+    if not _is_wsl():
+        return
+    if find_library("xcb-cursor"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb;wayland"
+    else:
+        print(
+            "[morseformer] WSL detected: using the Wayland Qt backend, which "
+            "can be unstable under WSLg (the 'copy mode' warning, window not "
+            "showing). For a stable GUI install the X11 backend dependency:\n"
+            "    sudo apt install libxcb-cursor0\n"
+            "then relaunch — morseformer will prefer the xcb backend "
+            "automatically.",
+            file=sys.stderr,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_qt_platform()
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("morseformer")
     app.setOrganizationName("morseformer")
     win = MainWindow()
-    win.show()
+    # showNormal() (not show()) + raise + activate: under WSLg/Weston the
+    # window otherwise sometimes opens iconified and won't restore. This
+    # forces a normal, foreground, focused state on launch.
+    win.showNormal()
+    win.raise_()
+    win.activateWindow()
     return app.exec()
 
 

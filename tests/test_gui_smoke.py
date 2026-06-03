@@ -151,6 +151,58 @@ def test_set_preset_with_unknown_name_emits_error_signal() -> None:
     assert "does-not-exist" in captured[-1]
 
 
+def test_configure_qt_platform_respects_user_override(monkeypatch) -> None:
+    import morseformer.gui.app as app
+
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    # Even on WSL with the lib present, an explicit override must win.
+    monkeypatch.setattr(app, "_is_wsl", lambda: True)
+    app._configure_qt_platform()
+    import os
+
+    assert os.environ["QT_QPA_PLATFORM"] == "offscreen"
+
+
+def test_configure_qt_platform_prefers_xcb_on_wsl(monkeypatch) -> None:
+    import ctypes.util
+    import os
+
+    import morseformer.gui.app as app
+
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.setattr(app, "_is_wsl", lambda: True)
+    monkeypatch.setattr(ctypes.util, "find_library",
+                        lambda name: "/usr/lib/libxcb-cursor.so.0")
+    app._configure_qt_platform()
+    assert os.environ["QT_QPA_PLATFORM"] == "xcb;wayland"
+
+
+def test_configure_qt_platform_hint_when_xcb_missing(monkeypatch, capsys) -> None:
+    import ctypes.util
+    import os
+
+    import morseformer.gui.app as app
+
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.setattr(app, "_is_wsl", lambda: True)
+    monkeypatch.setattr(ctypes.util, "find_library", lambda name: None)
+    app._configure_qt_platform()
+    # No platform pinned, but the user is told how to get the stable backend.
+    assert "QT_QPA_PLATFORM" not in os.environ
+    assert "libxcb-cursor0" in capsys.readouterr().err
+
+
+def test_configure_qt_platform_noop_off_wsl(monkeypatch) -> None:
+    import os
+
+    import morseformer.gui.app as app
+
+    monkeypatch.delenv("QT_QPA_PLATFORM", raising=False)
+    monkeypatch.setattr(app, "_is_wsl", lambda: False)
+    app._configure_qt_platform()
+    assert "QT_QPA_PLATFORM" not in os.environ
+
+
 def test_worker_bandwidth_falls_back_to_preset_then_override() -> None:
     # The streaming config should use the preset's bandwidth by default and
     # the explicit override once set (mirrors the conf/digit override path).
