@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>morseformer — open-source transformer Morse decoder</title>
+<meta name="description" content="morseformer is an open-source Conformer + RNN-T Morse / CW decoder with a built-in amateur-radio language model. Runs locally on CPU, real-time, Apache 2.0.">
+<meta property="og:title" content="morseformer — open-source transformer Morse decoder">
+<meta property="og:description" content="Conformer + RNN-T CW decoder with an integrated ham language model. pip install morseformer.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2316232B'/%3E%3Ccircle cx='9' cy='16' r='3' fill='%23F2A93B'/%3E%3Crect x='15' y='13' width='11' height='6' rx='3' fill='%23F2A93B'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --panel: #16232B;
+    --panel-deep: #0F1920;
+    --panel-raised: #1E2F39;
+    --ivory: #EDE6D6;
+    --muted: #8FA3AD;
+    --amber: #F2A93B;
+    --amber-dim: #8C5F1C;
+    --line: #2C4350;
+    --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--panel);
+    color: var(--ivory);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--amber); text-decoration: none; }
+  a:hover { text-decoration: underline; text-underline-offset: 3px; }
+  a:focus-visible, button:focus-visible, input:focus-visible {
+    outline: 2px solid var(--amber); outline-offset: 3px;
+  }
+  code, pre, .mono { font-family: var(--mono); }
+  code { font-size: 0.92em; }
+
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+
+  /* ---------- top bar ---------- */
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 0; gap: 16px; flex-wrap: wrap;
+  }
+  .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ivory); font-weight: 600; }
+  .brand svg { display: block; }
+  .brand:hover { text-decoration: none; }
+  nav.links { display: flex; gap: 22px; font-size: 15px; }
+  nav.links a { color: var(--muted); }
+  nav.links a:hover { color: var(--ivory); }
+  .version {
+    font-family: var(--mono); font-size: 13px; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px; padding: 3px 10px;
+  }
+
+  /* ---------- hero ---------- */
+  .hero { padding: 40px 0 28px; }
+  .hero h1 {
+    font-size: clamp(38px, 6.2vw, 68px);
+    line-height: 1.02; letter-spacing: -0.02em; font-weight: 600;
+    margin: 0 0 6px;
+  }
+  .morse-under {
+    font-family: var(--mono); color: var(--amber); letter-spacing: 0.12em;
+    font-size: clamp(13px, 1.6vw, 16px); margin: 0 0 26px; user-select: none;
+  }
+  .hero p.lead {
+    font-size: clamp(18px, 2.2vw, 22px); line-height: 1.45; max-width: 34em;
+    margin: 0 0 22px; color: var(--ivory);
+  }
+  .hero p.sub { color: var(--muted); max-width: 40em; margin: 0 0 34px; }
+
+  /* ---------- keyer (the one bold element) ---------- */
+  .keyer {
+    background: var(--panel-deep);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px 22px 18px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+  }
+  .keyer-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .keyer input[type=text] {
+    flex: 1 1 260px; min-width: 0;
+    background: var(--panel); color: var(--ivory);
+    border: 1px solid var(--line); border-radius: 8px;
+    font-family: var(--mono); font-size: 18px; letter-spacing: 0.06em;
+    padding: 10px 14px; text-transform: uppercase;
+  }
+  .keyer input[type=text]::placeholder { color: var(--muted); text-transform: none; letter-spacing: 0; }
+  .btn {
+    background: var(--amber); color: #1A1305; border: 0; border-radius: 8px;
+    font: 600 16px var(--sans); padding: 11px 20px; cursor: pointer;
+  }
+  .btn:hover { background: #FFBE55; }
+  .btn:disabled { background: var(--amber-dim); color: #3A2A10; cursor: default; }
+  .btn.ghost { background: transparent; color: var(--ivory); border: 1px solid var(--line); }
+  .btn.ghost:hover { border-color: var(--muted); background: transparent; }
+  .knobs { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 14px; font-size: 14px; color: var(--muted); }
+  .knob { display: flex; align-items: center; gap: 10px; }
+  .knob input[type=range] { accent-color: var(--amber); width: 130px; }
+  .knob output { font-family: var(--mono); color: var(--ivory); min-width: 6ch; }
+  canvas#scope {
+    width: 100%; height: 96px; display: block; margin-top: 16px;
+    background: var(--panel); border-radius: 8px; border: 1px solid var(--line);
+  }
+  .decoded {
+    margin-top: 14px; min-height: 2.3em;
+    font-family: var(--mono); font-size: clamp(20px, 3vw, 28px); letter-spacing: 0.1em;
+    color: var(--ivory); white-space: pre-wrap; word-break: break-all;
+  }
+  .decoded .cursor {
+    display: inline-block; width: 0.55em; height: 1.1em; vertical-align: -0.15em;
+    background: var(--amber); margin-left: 2px;
+  }
+  .decoded .cursor.on { animation: blink 1s steps(2) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  @media (prefers-reduced-motion: reduce) { .decoded .cursor.on { animation: none; } }
+  .keyer .note { font-size: 13.5px; color: var(--muted); margin: 12px 0 0; }
+  .keyer .note code { color: var(--ivory); }
+
+  /* ---------- sections ---------- */
+  section { padding: 54px 0; border-top: 1px solid var(--line); }
+  section h2 {
+    font-size: clamp(24px, 3vw, 32px); line-height: 1.15; letter-spacing: -0.01em;
+    font-weight: 600; margin: 0 0 18px;
+  }
+  section p { max-width: 62ch; }
+  section p.muted, .muted { color: var(--muted); }
+
+  pre.cmd {
+    background: var(--panel-deep); border: 1px solid var(--line); border-radius: 10px;
+    padding: 16px 18px; overflow-x: auto; font-size: 15px; line-height: 1.6; margin: 0 0 14px;
+    color: var(--ivory);
+  }
+  pre.cmd .c { color: var(--muted); }
+  pre.cmd .p { color: var(--amber); user-select: none; }
+
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+  @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+
+  /* pipeline: a real sequence, so numbering is earned */
+  ol.pipe { list-style: none; padding: 0; margin: 24px 0 0; counter-reset: st; }
+  ol.pipe li {
+    display: grid; grid-template-columns: 2.2em 1fr; gap: 14px;
+    padding: 14px 0; border-top: 1px solid var(--line);
+  }
+  ol.pipe li:first-child { border-top: 0; }
+  ol.pipe li::before {
+    counter-increment: st; content: counter(st);
+    font-family: var(--mono); color: var(--amber); font-size: 15px; padding-top: 3px;
+  }
+  ol.pipe li strong { display: block; font-weight: 600; }
+  ol.pipe li span { color: var(--muted); font-size: 15.5px; }
+
+  table.bench {
+    border-collapse: collapse; width: 100%; font-size: 15.5px; margin: 20px 0 10px;
+  }
+  table.bench th, table.bench td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  table.bench th { color: var(--muted); font-weight: 500; }
+  table.bench td.num, table.bench th.num { text-align: right; font-family: var(--mono); }
+  table.bench td.win { color: var(--amber); }
+  .tbl-scroll { overflow-x: auto; }
+
+  .presets { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 22px; }
+  .preset { border-top: 2px solid var(--amber); padding: 12px 0 0; }
+  .preset code { display: block; font-size: 16px; margin-bottom: 6px; color: var(--ivory); }
+  .preset span { color: var(--muted); font-size: 15px; }
+
+  /* ---------- footer ---------- */
+  footer { border-top: 1px solid var(--line); padding: 34px 0 48px; color: var(--muted); font-size: 15px; }
+  footer .row { display: flex; justify-content: space-between; gap: 18px; flex-wrap: wrap; }
+  footer .foot-links { display: flex; gap: 20px; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="6" fill="#0F1920"/>
+        <circle cx="9" cy="16" r="3" fill="#F2A93B"/>
+        <rect x="15" y="13" width="11" height="6" rx="3" fill="#F2A93B"/>
+      </svg>
+      morseformer
+      <span class="version">v0.6.4</span>
+    </a>
+    <nav class="links" aria-label="Site">
+      <a href="#install">Install</a>
+      <a href="#bench">Benchmarks</a>
+      <a href="#how">How it works</a>
+      <a href="https://github.com/sderhy/morseformer">GitHub</a>
+      <a href="https://huggingface.co/sderhy/morseformer">Hugging Face</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <h1>Morse code, decoded by a transformer.</h1>
+    <p class="morse-under" aria-hidden="true">-- --- .-. ... . ..-. --- .-. -- . .-.</p>
+    <p class="lead">morseformer listens to a CW signal and writes down what it hears — on your own machine, in real time, on a plain CPU.</p>
+    <p class="sub">It is the first open-source Morse decoder built on a Conformer + RNN-T model, with a language model that knows amateur-radio idioms (callsigns, Q-codes, CQ DE … K). Apache 2.0.</p>
+
+    <div class="keyer" id="keyer">
+      <div class="keyer-row">
+        <label for="msg" class="visually-hidden" style="position:absolute;left:-9999px">Text to send</label>
+        <input id="msg" type="text" maxlength="60" value="CQ DE F4HYY K" placeholder="Type something to key it…" autocomplete="off" spellcheck="false">
+        <button class="btn" id="play">Key it</button>
+        <button class="btn ghost" id="stop" disabled>Stop</button>
+      </div>
+      <div class="knobs">
+        <div class="knob"><label for="wpm">Speed</label><input id="wpm" type="range" min="8" max="40" value="20"><output for="wpm" id="wpmOut">20 WPM</output></div>
+        <div class="knob"><label for="tone">Tone</label><input id="tone" type="range" min="400" max="1000" step="10" value="600"><output for="tone" id="toneOut">600 Hz</output></div>
+        <div class="knob"><label for="noise">Noise</label><input id="noise" type="range" min="0" max="100" value="15"><output for="noise" id="noiseOut">15 %</output></div>
+      </div>
+      <canvas id="scope" width="1000" height="96" aria-label="Signal oscilloscope"></canvas>
+      <div class="decoded" aria-live="polite"><span id="text"></span><span class="cursor" id="cur"></span></div>
+      <p class="note">This is the browser keyer: it turns your text into a CW tone so you can hear what the decoder works with. The decoder itself runs on your computer — <code>pip install morseformer</code> below.</p>
+    </div>
+  </div>
+
+  <section id="install">
+    <h2>Install and decode in two commands</h2>
+    <div class="two">
+      <div>
+        <p class="muted">Decode a recording. The first run downloads the model from Hugging Face; no GPU is needed.</p>
+<pre class="cmd"><span class="p">$ </span>pip install morseformer
+<span class="p">$ </span>morseformer decode my_recording.wav</pre>
+        <p class="muted">Listen to a receiver live (PulseAudio input):</p>
+<pre class="cmd"><span class="p">$ </span>pip install "morseformer[live]"
+<span class="p">$ </span>morseformer live</pre>
+      </div>
+      <div>
+        <p class="muted">No Nvidia card? Install the CPU build of PyTorch first and save about 4 GB of download.</p>
+<pre class="cmd"><span class="p">$ </span>pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+<span class="p">$ </span>pip install morseformer</pre>
+        <p class="muted">Python 3.10 – 3.13. Linux, macOS and Windows. <code>morseformer --help</code> lists every subcommand.</p>
+      </div>
+    </div>
+
+    <div class="presets">
+      <div class="preset"><code>--preset live</code><span>Default. Balanced thresholds for a typical band.</span></div>
+      <div class="preset"><code>--preset prose</code><span>LM fusion + word splitter for ragchew and text: DROMCHRIS becomes DR OM CHRIS.</span></div>
+      <div class="preset"><code>--preset contest</code><span>Looser timing for fast exchanges.</span></div>
+      <div class="preset"><code>--preset conservative</code><span>Tighter thresholds for very noisy bands.</span></div>
+    </div>
+  </section>
+
+  <section id="bench">
+    <h2>Measured on the air, not on synthetic audio</h2>
+    <p>The v0.6.4 model was promoted after an audit of 26 hand-keyed ragchew recordings from two operators (31 minutes in total), decoded with the <code>prose</code> preset. One operator, g6pz, is held out of training entirely.</p>
+    <div class="tbl-scroll">
+    <table class="bench">
+      <thead><tr><th>Metric</th><th class="num">v0.6.3</th><th class="num">v0.6.4</th><th class="num">Change</th></tr></thead>
+      <tbody>
+        <tr><td>Character error rate, all clips</td><td class="num">26.98 %</td><td class="num">17.75 %</td><td class="num win">−34 %</td></tr>
+        <tr><td>Word error rate, all clips</td><td class="num">70.34 %</td><td class="num">44.31 %</td><td class="num win">−37 %</td></tr>
+        <tr><td>CER, g3ses</td><td class="num">20.56 %</td><td class="num">8.45 %</td><td class="num win">−59 %</td></tr>
+        <tr><td>CER, g6pz (held out)</td><td class="num">34.46 %</td><td class="num">28.60 %</td><td class="num win">−17 %</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted">Every release must also pass a ten-category gate: prose and oratory clips, a callsign clip, a WebSDR FAV22-style clip, a contest guard, plus silence, word-gap and streaming-latency stress tests. Full history and known regressions are in the <a href="https://github.com/sderhy/morseformer/blob/main/CHANGELOG.md">changelog</a>.</p>
+  </section>
+
+  <section id="how">
+    <h2>How it works</h2>
+    <p>Classic decoders (fldigi, MRP40, CW Skimmer) segment the signal with hand-tuned thresholds and fall apart in QRM, QSB and sloppy keying. morseformer treats the problem the way speech recognition does — but as character classification rather than word transcription — and learns timing from data. About 3.9 million parameters, small enough to run in real time on a laptop CPU.</p>
+    <ol class="pipe">
+      <li><strong>DSP front-end</strong><span>Complex band-pass filter centred on the carrier.</span></li>
+      <li><strong>Conformer encoder</strong><span>8 layers, d = 144, rotary attention, 4× time sub-sampling. Shared by both heads.</span></li>
+      <li><strong>Two heads</strong><span>CTC for frame-wise alignment and RNN-T for streaming output.</span></li>
+      <li><strong>Language model</strong><span>Optional shallow fusion with a 482 KB amateur-idiom character 3-gram that re-segments run-on words.</span></li>
+      <li><strong>Text</strong><span>49-token vocabulary: letters, digits, punctuation, prosigns, and French É, À and apostrophe.</span></li>
+    </ol>
+    <p class="muted" style="margin-top:22px">Training audio comes from a reproducible synthetic HF pipeline (<code>morse_synth/</code>: operator timing jitter, AWGN, QSB, QRN, drift, QRM) plus a forced-alignment-aware fine-tune on real hand-keyed audio. Details in the <a href="https://huggingface.co/sderhy/morseformer">model card</a>.</p>
+  </section>
+
+  <footer>
+    <div class="row">
+      <div>Built by Sergei Derhy, F4HYY. Apache 2.0.</div>
+      <div class="foot-links">
+        <a href="https://github.com/sderhy/morseformer">GitHub</a>
+        <a href="https://pypi.org/project/morseformer/">PyPI</a>
+        <a href="https://huggingface.co/sderhy/morseformer">Hugging Face</a>
+        <a href="https://github.com/sderhy/morseformer/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/sderhy/morseformer/issues">Report a bug</a>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<script>
+(() => {
+  const MORSE = {
+    A:'.-',B:'-...',C:'-.-.',D:'-..',E:'.',F:'..-.',G:'--.',H:'....',I:'..',J:'.---',K:'-.-',L:'.-..',M:'--',
+    N:'-.',O:'---',P:'.--.',Q:'--.-',R:'.-.',S:'...',T:'-',U:'..-',V:'...-',W:'.--',X:'-..-',Y:'-.--',Z:'--..',
+    '0':'-----','1':'.----','2':'..---','3':'...--','4':'....-','5':'.....','6':'-....','7':'--...','8':'---..','9':'----.',
+    '.':'.-.-.-',',':'--..--','?':'..--..','/':'-..-.','=':'-...-','+':'.-.-.','-':'-....-','@':'.--.-.',
+    'É':'..-..','À':'.--.-',"'":'.----.'
+  };
+  const $ = id => document.getElementById(id);
+  const msg = $('msg'), play = $('play'), stop = $('stop');
+  const wpm = $('wpm'), tone = $('tone'), noise = $('noise');
+  const out = $('text'), cur = $('cur');
+  const canvas = $('scope'), g = canvas.getContext('2d');
+
+  const bind = (el, o, fmt) => { const f = () => o.textContent = fmt(el.value); el.addEventListener('input', f); f(); };
+  bind(wpm, $('wpmOut'), v => v + ' WPM');
+  bind(tone, $('toneOut'), v => v + ' Hz');
+  bind(noise, $('noiseOut'), v => v + ' %');
+
+  let ctx, analyser, gain, noiseGain, osc, noiseSrc, raf, timers = [], running = false;
+
+  function ensureAudio() {
+    if (ctx) return;
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
+    gain = ctx.createGain(); gain.gain.value = 0;
+    osc = ctx.createOscillator(); osc.type = 'sine';
+    osc.connect(gain); gain.connect(analyser);
+    // band noise
+    const len = ctx.sampleRate * 2, buf = ctx.createBuffer(1, len, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    noiseSrc = ctx.createBufferSource(); noiseSrc.buffer = buf; noiseSrc.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 650; bp.Q.value = 0.9;
+    noiseGain = ctx.createGain(); noiseGain.gain.value = 0;
+    noiseSrc.connect(bp); bp.connect(noiseGain); noiseGain.connect(analyser);
+    analyser.connect(ctx.destination);
+    osc.start(); noiseSrc.start();
+  }
+
+  function draw() {
+    const w = canvas.width, h = canvas.height;
+    const data = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(data);
+    g.fillStyle = '#16232B'; g.fillRect(0, 0, w, h);
+    g.strokeStyle = '#2C4350'; g.beginPath(); g.moveTo(0, h/2); g.lineTo(w, h/2); g.stroke();
+    g.strokeStyle = '#F2A93B'; g.lineWidth = 1.5; g.beginPath();
+    for (let i = 0; i < data.length; i++) {
+      const x = i / data.length * w, y = (data[i] / 255) * h;
+      i ? g.lineTo(x, y) : g.moveTo(x, y);
+    }
+    g.stroke();
+    raf = requestAnimationFrame(draw);
+  }
+
+  function reset() {
+    timers.forEach(clearTimeout); timers = [];
+    if (raf) cancelAnimationFrame(raf);
+    if (gain) { gain.gain.cancelScheduledValues(0); gain.gain.value = 0; noiseGain.gain.value = 0; }
+    running = false; play.disabled = false; stop.disabled = true; cur.classList.remove('on');
+  }
+
+  function key() {
+    ensureAudio(); if (ctx.state === 'suspended') ctx.resume();
+    reset(); running = true; play.disabled = true; stop.disabled = false;
+    out.textContent = ''; cur.classList.add('on');
+    osc.frequency.value = +tone.value;
+    noiseGain.gain.value = (+noise.value / 100) * 0.35;
+    const unit = 1.2 / +wpm.value;            // seconds per dit (PARIS standard)
+    const text = msg.value.toUpperCase().replace(/\s+/g, ' ').trim();
+    let t = ctx.currentTime + 0.15;
+    const ramp = 0.005;
+    const on  = at => { gain.gain.setTargetAtTime(0.5, at, ramp); };
+    const off = at => { gain.gain.setTargetAtTime(0,   at, ramp); };
+
+    for (const ch of text) {
+      if (ch === ' ') { t += unit * 4; continue; }  // 3 (char gap) + 4 = 7 units
+      const code = MORSE[ch];
+      if (!code) continue;
+      for (let i = 0; i < code.length; i++) {
+        on(t); t += code[i] === '.' ? unit : unit * 3; off(t);
+        if (i < code.length - 1) t += unit;
+      }
+      const reveal = ch, when = (t - ctx.currentTime) * 1000;
+      timers.push(setTimeout(() => { out.textContent += reveal; }, when));
+      t += unit * 3;
+    }
+    // second pass: insert the visual word spaces at the right moments
+    let t2 = ctx.currentTime + 0.15;
+    for (let k = 0; k < text.length; k++) {
+      const ch = text[k];
+      if (ch === ' ') { const when = (t2 - ctx.currentTime) * 1000; timers.push(setTimeout(() => { out.textContent += ' '; }, when)); t2 += unit * 4; continue; }
+      const code = MORSE[ch]; if (!code) continue;
+      for (let i = 0; i < code.length; i++) { t2 += code[i] === '.' ? unit : unit * 3; if (i < code.length - 1) t2 += unit; }
+      t2 += unit * 3;
+    }
+    timers.push(setTimeout(reset, (t - ctx.currentTime) * 1000 + 400));
+    draw();
+  }
+
+  play.addEventListener('click', key);
+  stop.addEventListener('click', reset);
+  msg.addEventListener('keydown', e => { if (e.key === 'Enter') key(); });
+
+  // idle scope
+  g.fillStyle = '#16232B'; g.fillRect(0, 0, canvas.width, canvas.height);
+  g.strokeStyle = '#2C4350'; g.beginPath(); g.moveTo(0, 48); g.lineTo(1000, 48); g.stroke();
+})();
+</script>
+</body>
+</html>
